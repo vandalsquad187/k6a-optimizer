@@ -3,7 +3,7 @@
 KernelSU/Magisk module for **Redmi Note 12 Pro 4G (sweet2)**
 SoC: Snapdragon 730 (SM7150) · Kernel: 4.14 CAF
 
-[![Build](https://github.com/YOUR_USERNAME/k6a-optimizer/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR_USERNAME/k6a-optimizer/actions/workflows/build.yml)
+#[![Build](https://github.com/YOUR_USERNAME/k6a-optimizer/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR_USERNAME/k6a-optimizer/actions/workflows/build.yml)
 
 ---
 
