@@ -1,4 +1,4 @@
-# BadazZ89 k6a Optimizer
+# [BadazZ89] >k6a Optimiz3r
 
 KernelSU/Magisk module for **Redmi Note 12 Pro 4G (sweet2)**
 SoC: Snapdragon 730 (SM7150) · Kernel: 4.14 CAF
