@@ -1,0 +1,12 @@
+id=Bad4zz89_k6a_tweaks
+name=BadazZ89 k6a Optimizer
+version=4.0
+versionCode=20
+author=BadazZ89
+description=Gaming Optimizer — SD730/SM7150 sweet2 | CPU·GPU·Thermal·Bypass·MIUI Tweaks
+minMagisk=25200
+minApi=33
+updateJson=https://raw.githubusercontent.com/BadazZ89/k6a-optimizer/main/update.json
+webuiIcon=icon/icon.png
+actionIcon=icon/icon.png
+banner=icon/icon.png
