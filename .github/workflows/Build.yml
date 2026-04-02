@@ -1,0 +1,220 @@
+name: Build k6a-daemon + Package Module
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'k6a-daemon/**'
+      - 'module/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches: [ main ]
+  # Allow  trigger from the Actions tab
+  :
+
+jobs:
+  build:
+    name: Build & Package
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Rust toolchain ───────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      # ── 3. Cache Rust build artifacts ───────────────────────────────────────
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            k6a-daemon/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('k6a-daemon/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # ── 4. Android NDK ──────────────────────────────────────────────────────
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK r25
+        run: |
+          echo "y" | sdkmanager "ndk;25.2.9519653" > /dev/null
+          echo "NDK_PATH=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+
+      # ── 5. Configure cross-compile linker ───────────────────────────────────
+      - name: Configure Cargo for Android cross-compile
+        run: |
+          LINKER="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang"
+          AR="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+
+          mkdir -p k6a-daemon/.cargo
+          cat > k6a-daemon/.cargo/config.toml << EOF
+          [target.aarch64-linux-android]
+          linker = "$LINKER"
+          ar = "$AR"
+          EOF
+
+          echo "Linker: $LINKER"
+          ls -la "$LINKER"
+
+      # ── 6. Build Rust binary ─────────────────────────────────────────────────
+      - name: Build k6a-daemon (release, aarch64-linux-android)
+        working-directory: k6a-daemon
+        run: |
+          cargo build \
+            --release \
+            --target aarch64-linux-android
+
+          # Confirm binary exists and show size
+          BINARY="target/aarch64-linux-android/release/k6a-daemon"
+          ls -lh "$BINARY"
+          file "$BINARY"
+
+      # ── 7. Fetch original module zip as base ────────────────────────────────
+      - name: Download base module zip
+        run: |
+          # The base zip (without binary) is stored in the repo
+          cp module/BadazZ89_k6a_Optimizer_base.zip /tmp/module_base.zip || \
+          echo "No base zip found — will build from module/ files only"
+
+      # ── 8. Package flashable zip ─────────────────────────────────────────────
+      - name: Package flashable Magisk/KernelSU zip
+        run: |
+          BINARY="k6a-daemon/target/aarch64-linux-android/release/k6a-daemon"
+          OUT="/tmp/BadazZ89_k6a_Optimizer_v3.10.zip"
+          STAGING="/tmp/staging"
+
+          mkdir -p "$STAGING/bin"
+          mkdir -p "$STAGING/webroot"
+          mkdir -p "$STAGING/config"
+          mkdir -p "$STAGING/run"
+          mkdir -p "$STAGING/META-INF/com/google/android"
+
+          # ── Core module files ──────────────────────────────────────────────
+          cp module/module.prop    "$STAGING/module.prop"
+          cp module/service.sh     "$STAGING/service.sh"
+          cp module/system.prop    "$STAGING/system.prop"
+          cp module/index.html     "$STAGING/webroot/index.html"
+
+          # ── Rust daemon binary ─────────────────────────────────────────────
+          cp "$BINARY" "$STAGING/bin/k6a-daemon"
+          chmod 755 "$STAGING/bin/k6a-daemon"
+
+          # ── Shell scripts ──────────────────────────────────────────────────
+          cat > "$STAGING/customize.sh" << 'CEOF'
+          #!/system/bin/sh
+          # BadazZ89 k6a Optimizer — installer
+          SKIPUNZIP=1
+          ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          ui_print "  BadazZ89 k6a Optimizer v3.10"
+          ui_print "  SD730 / sweet2 / Redmi Note 12 Pro"
+          ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Extract all files
+          unzip -o "$ZIPFILE" -d "$MODPATH"
+
+          # Permissions
+          set_perm "$MODPATH/service.sh"        root root 0755
+          set_perm "$MODPATH/bin/k6a-daemon"    root root 0755
+          set_perm "$MODPATH/boot-completed.sh" root root 0755
+
+          # Create runtime dirs
+          mkdir -p "$MODPATH/run"
+          mkdir -p "$MODPATH/config"
+
+          ui_print "  ✅ k6a-daemon binary installed"
+          ui_print "  ✅ WebSocket backend ready"
+          ui_print "  ✅ Reboot to activate"
+          ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          CEOF
+
+          cat > "$STAGING/post-fs-data.sh" << 'EOF'
+          #!/system/bin/sh
+          MODDIR=${0%/*}
+          mkdir -p "$MODDIR/run"
+          mkdir -p "$MODDIR/config"
+          EOF
+
+          cat > "$STAGING/boot-completed.sh" << 'EOF'
+          #!/system/bin/sh
+          MODDIR=${0%/*}
+          DAEMON="$MODDIR/bin/k6a-daemon"
+          PIDFILE="$MODDIR/run/daemon.pid"
+          LOG="$MODDIR/config/daemon.log"
+
+          mkdir -p "$MODDIR/run"
+
+          # Kill stale instance
+          if [ -f "$PIDFILE" ]; then
+              OLD=$(cat "$PIDFILE" 2>/dev/null)
+              [ -n "$OLD" ] && kill "$OLD" 2>/dev/null
+              rm -f "$PIDFILE"
+          fi
+
+          # Start daemon
+          if [ -x "$DAEMON" ]; then
+              "$DAEMON" >> "$LOG" 2>&1 &
+              echo $! > "$PIDFILE"
+              echo "[$(date '+%H:%M:%S')] k6a-daemon started (PID $(cat $PIDFILE))" >> "$LOG"
+          else
+              echo "[$(date '+%H:%M:%S')] k6a-daemon not found at $DAEMON" >> "$LOG"
+          fi
+          EOF
+
+          # META-INF updater-script (required by Magisk/KernelSU)
+          cat > "$STAGING/META-INF/com/google/android/updater-script" << 'EOF'
+          #MAGISK
+          EOF
+
+          # Copy update-binary from base zip if available, else use placeholder
+          if [ -f "module/update-binary" ]; then
+              cp "module/update-binary" "$STAGING/META-INF/com/google/android/update-binary"
+          fi
+
+          # ── Create zip ────────────────────────────────────────────────────
+          cd "$STAGING"
+          zip -r "$OUT" . -x "*.DS_Store" "*.gitkeep"
+
+          echo "=== Zip contents ==="
+          unzip -l "$OUT"
+          echo "=== Size ==="
+          ls -lh "$OUT"
+
+      # ── 9. Upload as artifact ────────────────────────────────────────────────
+      - name: Upload flashable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: BadazZ89-k6a-Optimizer-v3.10
+          path: /tmp/BadazZ89_k6a_Optimizer_v3.10.zip
+          retention-days: 30
+
+      # ── 10. Create GitHub Release on version tags ────────────────────────────
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/BadazZ89_k6a_Optimizer_v3.10.zip
+          generate_release_notes: true
+          body: |
+            ## BadazZ89 k6a Optimizer
+
+            **Device:** Redmi Note 12 Pro 4G (sweet2)
+            **SoC:** Snapdragon 730 (SM7150)
+            **Kernel:** 4.14 CAF (spoofed as 6.12)
+
+            ### What's included
+            - `k6a-daemon` — Rust WebSocket daemon for real-time WebUI updates
+            - Selective thermal zone disable (touch/conn_therm protected)
+            - Battery spoofing + bypass power supply
+            - Binder-free auto gaming detection
+            - LMKD + ZRAM + schedutil tuning for 4.14 CAF
+
+            ### Flash via KernelSU or Magisk
