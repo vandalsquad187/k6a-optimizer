@@ -523,6 +523,18 @@ fn signal_controller_reload(moddir: &PathBuf) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+// MODDIR kommt als erstes Argument oder wird aus dem Binary-Pfad abgeleitet
+let moddir: PathBuf = std::env::args()
+    .nth(1)
+    .map(PathBuf::from)
+    .unwrap_or_else(|| {
+        std::env::current_exe()
+            .unwrap()
+            .parent().unwrap()   // bin/
+            .parent().unwrap()   // moddir
+            .to_path_buf()
+    });
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
     // Init logging — on Android this goes to logcat via stderr
