@@ -501,6 +501,26 @@ async fn data_txt_watchdog(state: SharedState, tx: Broadcaster) {
     }
 }
 
+/// Controller-PID aus run/controller.pid lesen
+fn read_controller_pid(moddir: &PathBuf) -> Option<i32> {
+    let pid_path = moddir.join("run/controller.pid");
+    let raw = fs::read_to_string(&pid_path).ok()?;
+    raw.trim().parse::<i32>().ok()
+}
+
+/// SIGHUP an den Controller senden → löst Config-Reload aus
+fn signal_controller_reload(moddir: &PathBuf) {
+    match read_controller_pid(moddir) {
+        Some(pid) => {
+            match kill(Pid::from_raw(pid), Signal::SIGHUP) {
+                Ok(_)  => eprintln!("[daemon] SIGHUP → controller PID {}", pid),
+                Err(e) => eprintln!("[daemon] SIGHUP fehlgeschlagen PID {}: {}", pid, e),
+            }
+        }
+        None => eprintln!("[daemon] controller.pid nicht lesbar — kein SIGHUP"),
+    }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
@@ -533,3 +553,48 @@ async fn main() {
         data_txt_watchdog(Arc::clone(&state), tx.clone()),
     );
 }
+
+
+// ── inotify Watch auf settings.conf ──────────────────────────────────────
+// Läuft in eigenem Thread damit der WebSocket-Loop nicht blockiert wird.
+// Bei Änderung: SIGHUP an k6a-controller → Hot Reload der Config.
+let moddir_watch = moddir.clone(); // moddir ist dein bestehender PathBuf
+std::thread::spawn(move || {
+    let conf_path = moddir_watch.join("config/settings.conf");
+
+    let mut inotify = match Inotify::init() {
+        Ok(i)  => i,
+        Err(e) => { eprintln!("[daemon] inotify init fehlgeschlagen: {}", e); return; }
+    };
+
+    if let Err(e) = inotify.watches().add(
+        &conf_path,
+        // CLOSE_WRITE  = direktes Speichern (echo, WebUI-Write)
+        // MOVED_TO     = atomisches mv (vim, sed -i, nano)
+        WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+    ) {
+        eprintln!("[daemon] inotify watch fehlgeschlagen: {}", e);
+        return;
+    }
+
+    eprintln!("[daemon] Config-Watch aktiv: {:?}", conf_path);
+    let mut buffer = [0u8; 1024];
+
+    loop {
+        match inotify.read_events_blocking(&mut buffer) {
+            Ok(events) => {
+                // Mindestens ein Event → SIGHUP senden
+                let count = events.count();
+                if count > 0 {
+                    eprintln!("[daemon] settings.conf geändert ({} events) → reload", count);
+                    signal_controller_reload(&moddir_watch);
+                }
+            }
+            Err(e) => {
+                eprintln!("[daemon] inotify read error: {}", e);
+                // Kurz warten und weiter — kein panic
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+    }
+});
