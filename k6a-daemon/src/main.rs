@@ -16,6 +16,13 @@
  *
  * Kernel: 4.14 CAF (spoofed as 6.12) — no TLS, no fancy syscalls needed
  */
+use inotify::{Inotify, WatchMask};
+use nix::sys::signal::{kill, Signal};
+use nix::unistd::Pid;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::fs;
+use std::path::PathBuf;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
