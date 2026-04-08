@@ -25,7 +25,8 @@ futures-util = "0.3"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
+inotify = "0.10"
+nix = { version = "0.27", features = ["signal", "process"] }
 [profile.release]
 # Minimize binary size for Android deployment
 opt-level = "z"        # optimize for size
