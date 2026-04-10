@@ -1,0 +1,38 @@
+[package]
+name = "k6a-daemon"
+version = "1.0.0"
+edition = "2021"
+description = "k6a Optimizer WebSocket daemon for Redmi Note 12 Pro (sweet2)"
+
+[[bin]]
+name = "k6a-daemon"
+path = "src/main.rs"
+
+[dependencies]
+# Minimal async runtime — small binary size, no_std compatible
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "fs", "macros"] }
+# WebSocket — tungstenite is the lightest option, no TLS needed (localhost only)
+tokio-tungstenite = "0.21"
+# Serialization for messages between shell and daemon
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# HTTP for serving static WebUI files
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+# Futures utilities
+futures-util = "0.3"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+inotify = "0.10"
+nix = { version = "0.27", features = ["signal", "process"] }
+
+[profile.release]
+# Minimize binary size for Android deployment
+opt-level = "z"        # optimize for size
+lto = true             # link-time optimization
+codegen-units = 1      # better optimization
+strip = true           # strip debug symbols
+panic = "abort"        # smaller panic handler
+
