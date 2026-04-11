@@ -1,0 +1,121 @@
+name: Build k6a-daemon + Package Module
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'k6a-daemon/**'
+      - 'bin/**'
+      - 'service.sh'
+      - 'boot-completed.sh'
+      - 'customize.sh'
+      - 'system.prop'
+      - 'module.prop'
+      - 'webroot/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            k6a-daemon/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('k6a-daemon/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK r25
+        run: |
+          sdkmanager --install "ndk;25.2.9519653" --sdk_root=$ANDROID_SDK_ROOT
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+
+      - name: Configure Cargo linker
+        run: |
+          LINKER="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang"
+          AR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          mkdir -p k6a-daemon/.cargo
+          cat > k6a-daemon/.cargo/config.toml << TOML
+          [target.aarch64-linux-android]
+          linker = "$LINKER"
+          ar = "$AR"
+          TOML
+
+      - name: Build k6a-daemon
+        working-directory: k6a-daemon
+        run: |
+          cargo build --release --target aarch64-linux-android
+          ls -lh target/aarch64-linux-android/release/k6a-daemon
+
+      - name: Read version from module.prop
+        id: version
+        run: |
+          VERSION=$(grep '^version=' module.prop | cut -d= -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Package flashable zip
+        run: |
+          DAEMON="k6a-daemon/target/aarch64-linux-android/release/k6a-daemon"
+          STAGING="/tmp/staging"
+          VERSION="${{ steps.version.outputs.version }}"
+          OUT="/tmp/BadazZ89_k6a_Optimizer_${VERSION}.zip"
+
+          mkdir -p "$STAGING/bin"
+          mkdir -p "$STAGING/webroot"
+          mkdir -p "$STAGING/config"
+          mkdir -p "$STAGING/run"
+          mkdir -p "$STAGING/icon"
+
+          # ── Shell-Dateien aus Repo-Root ───────────────────────────────────
+          cp module.prop          "$STAGING/module.prop"
+          cp service.sh           "$STAGING/service.sh"
+          cp boot-completed.sh    "$STAGING/boot-completed.sh"
+          cp customize.sh         "$STAGING/customize.sh"
+          cp post-fs-data.sh      "$STAGING/post-fs-data.sh"
+          cp system.prop          "$STAGING/system.prop"
+          cp update.json          "$STAGING/update.json"
+          cp webroot/index.html   "$STAGING/webroot/index.html"
+          cp icon/icon.png        "$STAGING/icon/icon.png"
+
+          # ── Binaries ──────────────────────────────────────────────────────
+          # k6a-daemon: frisch gebaut von Rust CI
+          cp "$DAEMON"            "$STAGING/bin/k6a-daemon"
+          chmod 755               "$STAGING/bin/k6a-daemon"
+
+          # k6a-controller: Shell-Script aus Repo (kein Build nötig)
+          cp bin/k6a-controller   "$STAGING/bin/k6a-controller"
+          chmod 755               "$STAGING/bin/k6a-controller"
+
+          # ── ZIP packen ────────────────────────────────────────────────────
+          cd "$STAGING"
+          zip -r "$OUT" .
+          ls -lh "$OUT"
+
+      - name: Upload flashable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: BadazZ89-k6a-Optimizer-${{ steps.version.outputs.version }}
+          path: /tmp/BadazZ89_k6a_Optimizer_${{ steps.version.outputs.version }}.zip
+          retention-days: 30
