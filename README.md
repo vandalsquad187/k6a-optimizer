@@ -7,7 +7,7 @@ SoC: Snapdragon 730 (SM7150) · Kernel: 4.14 CAF
 
 ## Download
 
-Go to **[Actions](../../actions/workflows/build.yml)** → latest run → **Artifacts** → download `BadazZ89-k6a-Optimizer-v3.10.zip`
+Go to **[Actions](../../actions/workflows/build.yml)** → latest run → **Artifacts** → download 
 
 Flash via KernelSU or Magisk, reboot.
 
