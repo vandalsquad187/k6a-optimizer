@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.0
+# k6a-controller  v7.3
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -253,6 +253,8 @@ schedutil_set() {
 gpu_gaming() {
     w $GPU/devfreq/governor        "msm-adreno-tz"
     w $GPU/force_clk_on            "1"
+    # force_bus_on=1: GPU-Memory-Bus bleibt aktiv — keine Aufwach-Latenz
+    w $GPU/force_bus_on            "1" 2>/dev/null || true
     w $GPU/bus_split               "0"
     w $GPU/max_pwrlevel            "0"   # 700 MHz ceiling
     # min_pwrlevel=2 (490MHz): faster ramp to 700MHz vs pwrlevel=4 (342MHz)
@@ -264,16 +266,68 @@ gpu_gaming() {
     w $GPU/devfreq/adrenoboost      "3"   # strongest perf hint to msm-adreno-tz
     w $GPU/thermal_pwrlevel        "0"   # don't let thermal subsystem cap GPU
     w $GPU/adreno_idler_active     "0"
+    # throttling=0: verhindert KGSL-internen Throttle-Mechanismus
+    # Node existiert nur auf manchen SM7150-Kernels — || true für Sicherheit
+    echo "0" > "$GPU/throttling" 2>/dev/null || true
 }
 
 gpu_balanced() {
     w $GPU/devfreq/governor        "msm-adreno-tz"
     w $GPU/force_clk_on            "0"
+    w $GPU/force_bus_on            "0" 2>/dev/null || true
     w $GPU/bus_split               "1"
     w $GPU/max_pwrlevel            "0"
     w $GPU/min_pwrlevel            "5"   # 257 MHz floor
     w $GPU/thermal_pwrlevel        "1"
     w $GPU/adreno_idler_active     "1"
+    echo "1" > "$GPU/throttling" 2>/dev/null || true
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IRQ AFFINITY — vierstufig, als eigene Funktion für periodische Auffrischung
+#
+# Problem auf sweet_k6a: Kernel setzt IRQ-Affinität nach suspend/resume zurück.
+# Lösung: apply_irq_affinity() wird bei State-Eintritt UND periodisch aufgerufen.
+#
+# Routing-Strategie:
+#   Touch (goodix_ts) → Gold (0xc0): Touch-ISR direkt nah am InputDispatcher
+#   GPU  (kgsl-3d0)  → Gold (0xc0): GPU-Completion-ISR nah am RenderThread
+#   UFS  (ufshc)     → Silver (0x3f): Storage-Interrupts stören Gold nicht
+#   Net  (wlan/rmnet)→ Silver (0xfc): Paket-ISR von Gold fernhalten
+# ═══════════════════════════════════════════════════════════════════════════════
+apply_irq_affinity() {
+    # irqbalance deaktivieren — sonst setzt er unsere Affinität sofort zurück
+    stop irqbalance 2>/dev/null || true
+    kill -SIGSTOP $(pidof irqbalance) 2>/dev/null || true
+
+    local irq_dir irq_name
+    for irq_dir in /proc/irq/*/; do
+        [ -f "${irq_dir}actions" ] || continue
+        irq_name=$(cat "${irq_dir}actions" 2>/dev/null)
+        [ -z "$irq_name" ] && continue
+
+        # Touch → Gold (0xc0 = cpu6+7): minimale Input-Latenz
+        # goodix_ts, synaptics, focal, atmel, gt9xx, fts_touch
+        if echo "$irq_name" | grep -qiE "goodix|synaptics|fts_touch|gt9|focal|atmel|touch_irq|touchscreen"; then
+            printf '%s' "c0" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ Touch→Gold: $irq_name"
+
+        # GPU Completion → Gold (0xc0): ISR landet auf RenderThread-Cluster
+        elif echo "$irq_name" | grep -qiE "kgsl|kgsl3d|adreno"; then
+            printf '%s' "c0" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ GPU→Gold: $irq_name"
+
+        # UFS/Storage → Silver (0x3f = cpu0-5): Asset-Streaming auf Silver, Gold frei
+        elif echo "$irq_name" | grep -qiE "ufshc|ufs|mmc|sdhci|msdc"; then
+            printf '%s' "3f" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ UFS→Silver: $irq_name"
+
+        # Netzwerk → Silver (0xfc = cpu1-7 ohne cpu0): WLAN/rmnet/IPA von Gold
+        elif echo "$irq_name" | grep -qiE "wlan|rmnet|ipa|smd|gsi|qcom-net"; then
+            printf '%s' "fc" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ Net→Silver: $irq_name"
+        fi
+    done
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -281,10 +335,13 @@ gpu_balanced() {
 # schedtune only — uclamp does not exist on 4.14 CAF
 # ═══════════════════════════════════════════════════════════════════════════════
 sched_gaming() {
-    # schedtune: minimal boost — min_freq does the frequency lifting
-    w /dev/stune/top-app/schedtune.boost        "1"
+    # schedtune: boost=10 + prefer_idle=1 → Tasks aggressiv auf Gold-Kerne
+    # boost=10 (statt 1): stärkerer Hint, Tasks bevorzugt auf leistungsstarke Cores
+    # prefer_idle=1: wartet auf idle Gold statt sofort auf Silver zu laufen
+    # Kombination = Äquivalent zu uclamp.min=80 auf neueren Kernels
+    w /dev/stune/top-app/schedtune.boost        "10"
     w /dev/stune/top-app/schedtune.prefer_idle  "1"
-    w /dev/stune/foreground/schedtune.boost     "1"
+    w /dev/stune/foreground/schedtune.boost     "10"
     w /dev/stune/background/schedtune.boost     "-10" 2>/dev/null || true
     # cpuset: top-app + foreground on all cores (Gold available for CoD)
     echo "0-7" > /dev/cpuset/top-app/cpus               2>/dev/null || true
@@ -302,6 +359,10 @@ sched_gaming() {
     # Fast frequency change notification: 256 pages (~1MB) threshold
     w /proc/sys/kernel/sched_freq_inc_notify       "256"
     w /proc/sys/kernel/sched_freq_dec_notify       "256"
+    # Migration cost: Tasks bleiben 5ms auf ihrem Core bevor Migration erlaubt
+    # Verhindert Core-Hopping des RenderThread zwischen cpu6 und cpu7
+    # Default ~500000ns. Auf WALT-Kernels oft nicht vorhanden → w() ignoriert es
+    w /proc/sys/kernel/sched_migration_cost_ns     "5000000"
     # Micro-stutter: Gold down_rate hold 20ms (prevent bounce after frame burst)
     # tune_schedutil already sets 800µs but override for gaming stability
     [ -d "$SU_GOLD" ] && w "$SU_GOLD/down_rate_limit_us" "20000"
@@ -321,16 +382,11 @@ sched_gaming() {
         printf '%s' "0:1248000 1:1248000 2:1248000 3:1248000 4:1248000 5:1248000 6:1785600 7:1785600" \
             > "$MP/cpu_min_freq" 2>/dev/null || true
     fi
-    # IRQ affinity: network IRQs → Silver only, Gold stays free for render
-    local irq_dir irq_name
-    for irq_dir in /proc/irq/*/; do
-        irq_name=$(cat "${irq_dir}actions" 2>/dev/null)
-        echo "$irq_name" | grep -qiE "wlan|rmnet|ipa|smd|gsi" && \
-            printf '%s' "fc" > "${irq_dir}smp_affinity" 2>/dev/null || true
-    done
+    # IRQ Affinity — vierstufig via apply_irq_affinity() (Touch/GPU→Gold, UFS/Net→Silver)
     # Kernel entropy: disable add_random for I/O (saves overhead during gaming)
     for q in /sys/block/*/queue/add_random; do w "$q" "0"; done
-    log "Sched: WALT+schedtune+IRQ+msm_perf gaming"
+    apply_irq_affinity
+    log "Sched: WALT+schedtune+IRQ(Touch/GPU→Gold,UFS→3f,Net→fc)+msm_perf"
 }
 
 sched_balanced() {
@@ -471,13 +527,16 @@ CODM_PKG="com.activision.callofduty.shooter"
 tune_codm() {
     [ "$(cfg thread_pin_enable)" = "0" ] && return 0
 
-    # CoD PID via cgroup (zero Binder IPC)
+    # CoD PID: pidof zuerst (schnell), dann cgroup-Fallback
     local main_pid
-    main_pid=$(cat /sys/fs/cgroup/top-app/cgroup.procs 2>/dev/null | while read -r p; do
-        local cmd
-        cmd=$(cat "/proc/$p/cmdline" 2>/dev/null | tr -d '\0')
-        echo "$cmd" | grep -q "$CODM_PKG" && echo "$p" && break
-    done)
+    main_pid=$(pidof "$CODM_PKG" 2>/dev/null | awk '{print $1}')
+    if [ -z "$main_pid" ]; then
+        main_pid=$(cat /sys/fs/cgroup/top-app/cgroup.procs 2>/dev/null | while read -r p; do
+            [ -f "/proc/$p/cmdline" ] || continue
+            cmd=$(tr -d '\0' < "/proc/$p/cmdline" 2>/dev/null)
+            echo "$cmd" | grep -q "^${CODM_PKG}" && echo "$p" && break
+        done)
+    fi
     [ -z "$main_pid" ] && return 0
 
     dbg "tune_codm: CoD PID=$main_pid"
@@ -498,8 +557,18 @@ tune_codm() {
                 taskset -p 0xff "$tid" >/dev/null 2>&1
                 dbg "Worker $thread_name (tid $tid) → alle Kerne (0xff)"
                 ;;
+            *AudioMixer*|*AudioTrack*|*AudioFlinger*)
+                # Audio auf Silver — unterbricht Gold-RenderThread nicht
+                taskset -p 0x3f "$tid" >/dev/null 2>&1  # 0x3f = cpu0-5
+                dbg "Audio $thread_name (tid $tid) → Silver (0x3f)"
+                ;;
         esac
     done
+
+    # AudioFlinger-Prozess selbst auf Silver pinnen
+    local af_pid
+    af_pid=$(pidof audioserver 2>/dev/null | awk '{print $1}')
+    [ -n "$af_pid" ] && taskset -p 0x3f "$af_pid" >/dev/null 2>&1 &&         dbg "audioserver PID=$af_pid → Silver (0x3f)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -515,15 +584,24 @@ THERMAL_PREDICT_RATE=3       # °C/Tick — Steigerungsrate-Schwelle
 GOLD_MAX_NORMAL="2208000"
 GOLD_MAX_CAP="1785600"
 THERMAL_CAPPED=0
-PREV_TEMP=0
+PREV_TEMP=-1   # -1 = nicht initialisiert — verhindert falschen Rate-Spike beim ersten Tick
 
 thermal_predict_check() {
-    # Nur im GAMING oder COMPETITIVE State relevant
-    [ "$STATE" = "GAMING" ] || [ "$STATE" = "COMPETITIVE" ] || return 0
+    # Nur im GAMING State relevant — COMPETITIVE läuft immer ohne Prediction
+    # Thermal Prediction würde im Ranked genau bei Burst-Last cappem — falsch
+    [ "$STATE" = "GAMING" ] || return 0
     [ "$(cfg thermal_prediction_enable)" = "0" ] && return 0
 
     local curr_temp rate
     curr_temp=$(thermal_cpu_temp)
+
+    # Ersten Tick überspringen — PREV_TEMP=-1 bedeutet keine Baseline vorhanden
+    # Verhindert falschen Rate-Spike (curr_temp - 0 = ganzer Temp-Wert)
+    if [ "$PREV_TEMP" = "-1" ]; then
+        PREV_TEMP=$curr_temp
+        return 0
+    fi
+
     rate=$(( curr_temp - PREV_TEMP ))
     PREV_TEMP=$curr_temp
 
@@ -569,14 +647,20 @@ enter_balanced() {
     zram_balanced
     lmk_balanced
     w /proc/sys/kernel/sched_boost         "0"
+    w /proc/sys/kernel/sched_migration_cost_ns "500000"  # default restore
     thermal_full_restore
     restore_battery_spoof
     # Bypass: restore default 41°C threshold
     resetprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || \
         setprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || true
     net_restore
+    cmd power set-fixed-performance-mode-enabled false 2>/dev/null || true
     setprop debug.sf.disable_backpressure   "0" 2>/dev/null || true
     setprop debug.sf.enable_gl_backpressure "1" 2>/dev/null || true
+    setprop debug.sf.latch_unsignaled       "0" 2>/dev/null || true
+    setprop persist.vendor.qti.games.gt.fps "0" 2>/dev/null || true
+    w /proc/sys/kernel/sched_child_runs_first "0"
+    w /proc/sys/vm/extra_free_kbytes "0"
     start logd 2>/dev/null || true
     unfreeze_all
     printf '%s' "balanced" > "$PROFILE"
@@ -594,7 +678,10 @@ enter_gaming() {
     # up_rate=0:    instant ramp on any load spike (no delay)
     # down_rate Silver=8000µs: hold freq 8ms after burst (audio/net threads)
     # down_rate Gold=10000µs: hold freq 10ms after frame burst (less bouncing)
-    schedutil_set "1" "1804800" "0" "8000" \
+    # Silver down_rate=12ms: etwas länger halten als 8ms
+    # Verhindert Stutter bei Audio-Thread-Spikes (Schüsse, Explosionen)
+    # Gold down_rate=10ms via schedutil_set, dann 20ms override in sched_gaming
+    schedutil_set "1" "1804800" "0" "12000" \
                   "1" "2208000" "0" "10000"
     # ── GPU ──────────────────────────────────────────────────────────────────
     gpu_gaming
@@ -630,16 +717,27 @@ enter_gaming() {
     setprop debug.sf.enable_gl_backpressure "0" 2>/dev/null || true
     setprop debug.sf.set_idle_timer_ms      "0" 2>/dev/null || true
     setprop persist.sys.game_mode           "1" 2>/dev/null || true
-    # Vulkan driver performance hint
     setprop persist.sys.vulkan.perf_mode    "1" 2>/dev/null || true
+    # latch_unsignaled: SF präsentiert Frame ohne auf GPU-Signal zu warten
+    # Reduziert 1-Frame Wartezeit auf Kosten möglicher Tearing-Artefakte
+    # CoD bei 120Hz: Vorteil überwiegt deutlich
+    setprop debug.sf.latch_unsignaled       "1" 2>/dev/null || true
     cmd game set --downscale 1.0 com.activision.callofduty.shooter 2>/dev/null || true
+    # Qualcomm Game Tools FPS-Hint
+    setprop persist.vendor.qti.games.gt.fps "120" 2>/dev/null || true
     stop logd 2>/dev/null || true
+    # ── CoD kernel tweaks ─────────────────────────────────────────────────────
+    # Child-Thread läuft sofort nach fork() — CoD spawnt viele Threads
+    w /proc/sys/kernel/sched_child_runs_first "1"
+    # Mehr freien RAM für burst allocations (CoD lädt Assets ruckartig)
+    # 24576KB = 24MB Reserve unterhalb LMK-Trigger
+    w /proc/sys/vm/extra_free_kbytes "24576"
     # Thread Pinning: RenderThread+UnityMain → Gold (0xc0), Worker → alle (0xff)
     tune_codm
-    THERMAL_CAPPED=0   # Cap-Status zurücksetzen bei State-Wechsel
+    THERMAL_CAPPED=0
     printf '%s' "gaming" > "$PROFILE"
     STATE="GAMING"
-    log "GAMING: Silver≥1248000 Gold≥1785600 | GPU 342-700MHz | thermal=$(cfg thermal_disable)"
+    log "GAMING: Silver≥1248000 Gold≥1785600 | GPU 490-700MHz | thermal=$(cfg thermal_disable)"
 }
 
 
@@ -649,6 +747,7 @@ enter_battery() {
     cpu_set "powersave" "300000" "1248000" "300000" "1574400"
     w $GPU/devfreq/governor     "powersave"
     w $GPU/force_clk_on         "0"
+    w $GPU/force_bus_on         "0" 2>/dev/null || true
     w $GPU/bus_split             "1"
     w $GPU/min_pwrlevel          "5"
     w $GPU/max_pwrlevel          "4"
@@ -685,6 +784,7 @@ enter_competitive() {
     # msm-adreno-tz can still burst to 700MHz from there
     w $GPU/devfreq/governor        "msm-adreno-tz"
     w $GPU/force_clk_on            "1"
+    w $GPU/force_bus_on            "1" 2>/dev/null || true
     w $GPU/bus_split               "0"
     w $GPU/max_pwrlevel            "0"   # 700MHz ceiling
     w $GPU/min_pwrlevel            "1"   # 596MHz floor (higher than gaming)
@@ -693,24 +793,26 @@ enter_competitive() {
     w $GPU/devfreq/polling_interval "2"   # 2ms — fastest possible sampling
     w $GPU/thermal_pwrlevel        "0"
     w $GPU/adreno_idler_active     "0"
+    echo "0" > "$GPU/throttling" 2>/dev/null || true
     # ── I/O ──────────────────────────────────────────────────────────────────
     io_gaming
     # ── Memory: absolute minimum swap, aggressive dirty writeback ─────────────
     w /proc/sys/vm/swappiness              "5"
-    w /proc/sys/vm/vfs_cache_pressure      "30"
-    w /proc/sys/vm/page-cluster            "0"
     w /proc/sys/vm/dirty_expire_centisecs  "50"
     w /proc/sys/vm/dirty_writeback_centisecs "25"
+    zram_gaming       # lz4 + page-cluster=0 + vfs_cache_pressure=30
+    lmk_gaming        # same protection as gaming — CoD threads safe
     w /proc/sys/kernel/sched_boost         "1"
+    net_gaming        # BBR + UDP buffers — identical to gaming
     # ── Thermal: always fully disabled in competitive ─────────────────────────
     thermal_full_disable
     # ── Battery spoof ────────────────────────────────────────────────────────
     spoof_battery
     resetprop persist.vendor.battery.bypass_temp_thresh "30" 2>/dev/null ||         setprop persist.vendor.battery.bypass_temp_thresh "30" 2>/dev/null || true
     # ── Scheduler: max boost ─────────────────────────────────────────────────
-    w /dev/stune/top-app/schedtune.boost        "1"
+    w /dev/stune/top-app/schedtune.boost        "10"
     w /dev/stune/top-app/schedtune.prefer_idle  "1"
-    w /dev/stune/foreground/schedtune.boost     "1"
+    w /dev/stune/foreground/schedtune.boost     "10"
     echo "0-7" > /dev/cpuset/top-app/cpus       2>/dev/null || true
     echo "0-7" > /dev/cpuset/foreground/cpus    2>/dev/null || true
     w /proc/sys/kernel/sched_window_stats_policy  "2"
@@ -733,14 +835,21 @@ enter_competitive() {
     setprop debug.sf.enable_gl_backpressure "0" 2>/dev/null || true
     setprop debug.sf.set_idle_timer_ms      "0" 2>/dev/null || true
     setprop persist.sys.game_mode           "1" 2>/dev/null || true
+    setprop persist.sys.vulkan.perf_mode    "1" 2>/dev/null || true
+    setprop debug.sf.latch_unsignaled       "1" 2>/dev/null || true
     cmd game set --downscale 1.0 com.activision.callofduty.shooter 2>/dev/null || true
+    setprop persist.vendor.qti.games.gt.fps "120" 2>/dev/null || true
+    # Fixed Performance Mode: PowerHal hält alle Kerne auf max via PowerManager API
+    # Android 12+ / Lunaris 3.8 AOSP — cmd power verfügbar
+    cmd power set-fixed-performance-mode-enabled true 2>/dev/null || true
     stop logd 2>/dev/null || true
-    # Thread Pinning: RenderThread+UnityMain → Gold (0xc0)
+    w /proc/sys/kernel/sched_child_runs_first "1"
+    w /proc/sys/vm/extra_free_kbytes "24576"
     tune_codm
     THERMAL_CAPPED=0
     printf '%s' "gaming" > "$PROFILE"
     STATE="COMPETITIVE"
-    log "COMPETITIVE: Gold≥2092800 Silver≥1593600 GPU≥596MHz | thermal=OFF | perf gov"
+    log "COMPETITIVE: Gold≥2092800 Silver≥1593600 GPU≥596MHz | thermal=OFF | fixed-perf"
 }
 
 enter_thermal_limit() {
@@ -964,7 +1073,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.0 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.1.1 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Gold=cpu6-7/policy6"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
@@ -1050,10 +1159,10 @@ while true; do
             fi
             # Profile decision — per_app > auto-detect > manual
             is_game_pkg "$APP"
-            local _gret=$?
-            if [ $_gret -eq 2 ]; then
+            _GRET=$?
+            if [ "$_GRET" -eq 2 ]; then
                 TARGET="COMPETITIVE"
-            elif [ $_gret -eq 0 ]; then
+            elif [ "$_GRET" -eq 0 ]; then
                 # CODM auto-detect: match active → COMPETITIVE if enabled, else GAMING
                 if [ "$APP" = "com.activision.callofduty.shooter" ] &&                    [ "$MANUAL" = "competitive" ] && is_codm_in_match; then
                     TARGET="COMPETITIVE"
@@ -1093,6 +1202,8 @@ while true; do
         thermal_predict_check
         # Thread-Pinning periodisch auffrischen (neue Threads können spawnen)
         [ $(( TICK % 3 )) -eq 0 ] && tune_codm
+        # IRQ-Affinität periodisch auffrischen (Kernel kann sie nach suspend zurücksetzen)
+        [ $(( TICK % 10 )) -eq 0 ] && apply_irq_affinity
     fi
 
     # ── State transition — only on change ─────────────────────────────────────
