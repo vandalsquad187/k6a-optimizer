@@ -53,7 +53,8 @@ SU_GOLD=/sys/devices/system/cpu/cpufreq/policy6/schedutil  # Gold   cpu6-7
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 STATE="IDLE"
-PRE_THERMAL_STATE="BALANCED"   # state to return to after THERMAL_LIMIT
+PRE_THERMAL_STATE="BALANCED"
+THERMAL_WAS_DISABLED=0   # state to return to after THERMAL_LIMIT
 LAST_APP=""
 LAST_CFG_MTIME=0
 LAST_FREEZE_TRIGGER=""
@@ -171,12 +172,18 @@ thermal_zones_restore() {
 thermal_full_disable() {
     thermal_stop_daemons
     thermal_zones_disable
+    THERMAL_WAS_DISABLED=1
 }
 
-# Full thermal restore
+# Full thermal restore — NUR wenn WIR es deaktiviert haben
+# Ohne diesen Guard reaktiviert das Modul vendor.thermal-engine
+# aggressiver als der ROM-Default → mehr Throttling als ohne Modul!
 thermal_full_restore() {
+    [ "$THERMAL_WAS_DISABLED" = "1" ] || return 0
     thermal_zones_restore
     thermal_restore_daemons
+    THERMAL_WAS_DISABLED=0
+    log "Thermal: restored (war disabled)"
 }
 
 # Read highest CPU temperature in °C
@@ -251,24 +258,20 @@ schedutil_set() {
 # pwrlevels: 0=700 1=596 2=490 3=414 4=342 5=257 MHz
 # ═══════════════════════════════════════════════════════════════════════════════
 gpu_gaming() {
-    w $GPU/devfreq/governor        "msm-adreno-tz"
-    w $GPU/force_clk_on            "1"
-    # force_bus_on=1: GPU-Memory-Bus bleibt aktiv — keine Aufwach-Latenz
-    w $GPU/force_bus_on            "1" 2>/dev/null || true
-    w $GPU/bus_split               "0"
-    w $GPU/max_pwrlevel            "0"   # 700 MHz ceiling
-    # min_pwrlevel=2 (490MHz): faster ramp to 700MHz vs pwrlevel=4 (342MHz)
-    # 342MHz needed ~3 frames to reach 700MHz; 490MHz needs ~1 frame
-    w $GPU/min_pwrlevel            "2"
-    w $GPU/devfreq/min_freq        "490000000"
-    w $GPU/devfreq/max_freq        "700000000"
-    w $GPU/devfreq/polling_interval "5"   # 5ms vs default 10ms
-    w $GPU/devfreq/adrenoboost      "3"   # strongest perf hint to msm-adreno-tz
-    w $GPU/thermal_pwrlevel        "0"   # don't let thermal subsystem cap GPU
-    w $GPU/adreno_idler_active     "0"
-    # throttling=0: verhindert KGSL-internen Throttle-Mechanismus
-    # Node existiert nur auf manchen SM7150-Kernels — || true für Sicherheit
-    echo "0" > "$GPU/throttling" 2>/dev/null || true
+    w $GPU/devfreq/governor         "msm-adreno-tz"
+    w $GPU/force_clk_on             "1"
+    w $GPU/force_bus_on             "1"   2>/dev/null || true
+    w $GPU/bus_split                "0"
+    w $GPU/max_pwrlevel             "0"   # 700 MHz
+    w $GPU/min_pwrlevel             "2"   # 490 MHz floor
+    # devfreq/min_freq: Node fehlt auf manchen Kernels — nur schreiben wenn vorhanden
+    [ -f "$GPU/devfreq/min_freq"        ] && w $GPU/devfreq/min_freq "490000000"
+    [ -f "$GPU/devfreq/max_freq"        ] && w $GPU/devfreq/max_freq "800000000"  # true max on this kernel
+    [ -f "$GPU/devfreq/polling_interval"] && w $GPU/devfreq/polling_interval "5"
+    w $GPU/thermal_pwrlevel         "0"
+    echo "0" > "$GPU/throttling"    2>/dev/null || true
+    # Log für Diagnose: zeigt welche Nodes wirklich gesetzt wurden
+    log "GPU: gov=$(cat $GPU/devfreq/governor 2>/dev/null|head -c20) clk=$(cat $GPU/force_clk_on 2>/dev/null) min_freq=$(cat $GPU/devfreq/min_freq 2>/dev/null) pwrlvl=$(cat $GPU/min_pwrlevel 2>/dev/null) pwrl_max=$(cat $GPU/max_pwrlevel 2>/dev/null)"
 }
 
 gpu_balanced() {
@@ -279,7 +282,7 @@ gpu_balanced() {
     w $GPU/max_pwrlevel            "0"
     w $GPU/min_pwrlevel            "5"   # 257 MHz floor
     w $GPU/thermal_pwrlevel        "1"
-    w $GPU/adreno_idler_active     "1"
+    # adreno_idler_active: not present on this kernel
     echo "1" > "$GPU/throttling" 2>/dev/null || true
 }
 
@@ -296,9 +299,11 @@ gpu_balanced() {
 #   Net  (wlan/rmnet)→ Silver (0xfc): Paket-ISR von Gold fernhalten
 # ═══════════════════════════════════════════════════════════════════════════════
 apply_irq_affinity() {
-    # irqbalance deaktivieren — sonst setzt er unsere Affinität sofort zurück
+    # irqbalance: stop als init service + SIGKILL für sofortige Wirkung
     stop irqbalance 2>/dev/null || true
-    kill -SIGSTOP $(pidof irqbalance) 2>/dev/null || true
+    for _ib in $(pgrep irqbalance 2>/dev/null); do
+        kill -9 "$_ib" 2>/dev/null || true
+    done
 
     local irq_dir irq_name
     for irq_dir in /proc/irq/*/; do
@@ -374,13 +379,15 @@ sched_gaming() {
             > "$IB/input_boost_freq" 2>/dev/null || true
         w "$IB/input_boost_ms" "40"
     fi
-    # msm_performance: hard freq override (Qualcomm HAL, independent of governor)
+    # msm_performance: DEAKTIVIERT — kollidiert mit scaling_min/max_freq
+    # Diagnose zeigte cpu0@1017MHz / cpu6@1094MHz (FROZEN) durch falsches Format.
+    # cpu_set() setzt scaling_min/max_freq korrekt — kein zweiter Override nötig.
+    # Falls msm_performance existiert: Werte auf -1 (= kein Override) setzen
     local MP=/sys/module/msm_performance/parameters
     if [ -d "$MP" ]; then
-        printf '%s' "0:1804800 1:1804800 2:1804800 3:1804800 4:1804800 5:1804800 6:2208000 7:2208000" \
-            > "$MP/cpu_max_freq" 2>/dev/null || true
-        printf '%s' "0:1248000 1:1248000 2:1248000 3:1248000 4:1248000 5:1248000 6:1785600 7:1785600" \
-            > "$MP/cpu_min_freq" 2>/dev/null || true
+        printf '%s' "0:-1 1:-1 2:-1 3:-1 4:-1 5:-1 6:-1 7:-1"             > "$MP/cpu_max_freq" 2>/dev/null || true
+        printf '%s' "0:-1 1:-1 2:-1 3:-1 4:-1 5:-1 6:-1 7:-1"             > "$MP/cpu_min_freq" 2>/dev/null || true
+        dbg "msm_performance: cleared (set to -1 = no override)"
     fi
     # IRQ Affinity — vierstufig via apply_irq_affinity() (Touch/GPU→Gold, UFS/Net→Silver)
     # Kernel entropy: disable add_random for I/O (saves overhead during gaming)
@@ -662,6 +669,10 @@ enter_balanced() {
     w /proc/sys/kernel/sched_child_runs_first "0"
     w /proc/sys/vm/extra_free_kbytes "0"
     start logd 2>/dev/null || true
+    # irqbalance wieder starten wenn wir balanced sind (kein Gaming)
+    for _ib in $(pgrep -f irqbalance 2>/dev/null); do
+        kill -SIGCONT "$_ib" 2>/dev/null || true
+    done
     unfreeze_all
     printf '%s' "balanced" > "$PROFILE"
     STATE="BALANCED"
@@ -675,6 +686,25 @@ enter_gaming() {
     # down_rate_limit_us=800: hold high for 800µs (one ~120fps frame window)
     # hispeed_load=1: go to hispeed_freq at 1% load — effectively always boosted
     cpu_set "schedutil" "1248000" "1804800" "1785600" "2208000"
+    # Verifizieren nach cpu_set (msm_performance könnte überschreiben)
+    _s_min=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq 2>/dev/null)
+    _g_min=$(cat /sys/devices/system/cpu/cpu6/cpufreq/scaling_min_freq 2>/dev/null)
+    log "CPU verify: Silver_min=${_s_min} Gold_min=${_g_min} (soll: 1248000/1785600)"
+    # Sanity: wenn eingefroren (min=max) → erneut setzen ohne msm_performance
+    [ "${_s_min}" != "1248000" ] && {
+        log "CPU FREEZE DETECTED! Silver_min=${_s_min} → re-applying"
+        for c in 0 1 2 3 4 5; do
+            echo "1248000" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_min_freq 2>/dev/null || true
+            echo "1804800" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_max_freq 2>/dev/null || true
+        done
+    }
+    [ "${_g_min}" != "1785600" ] && {
+        log "CPU FREEZE DETECTED! Gold_min=${_g_min} → re-applying"
+        for c in 6 7; do
+            echo "1785600" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_min_freq 2>/dev/null || true
+            echo "2208000" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_max_freq 2>/dev/null || true
+        done
+    }
     # up_rate=0:    instant ramp on any load spike (no delay)
     # down_rate Silver=8000µs: hold freq 8ms after burst (audio/net threads)
     # down_rate Gold=10000µs: hold freq 10ms after frame burst (less bouncing)
@@ -697,11 +727,16 @@ enter_gaming() {
     # ART GC: shorter but more frequent pauses (no long stop-the-world)
     setprop dalvik.vm.heaptargetutilization 0.75 2>/dev/null || true
     setprop dalvik.vm.heapmaxfree           8m   2>/dev/null || true
-    # ── Thermal — LickT approach ─────────────────────────────────────────────
-    if [ "$(cfg thermal_disable)" = "1" ]; then
-        thermal_full_disable
+    # ── Thermal — Gaming braucht thermal_disable=1
+    # vendor.thermal-engine throttelt Gold auf 1555200Hz bei 63°C — zu aggressiv.
+    # Im Gaming-Modus immer deaktivieren. User kann thermal_disable=0 setzen
+    # um auf eigenes Risiko den Thermal-Engine aktiv zu lassen.
+    if [ "$(cfg thermal_disable)" = "0" ]; then
+        # Explizit deaktiviert: Engine bleibt aktiv (Nutzer-Entscheidung)
+        log "WARNUNG: thermal_disable=0 — Thermal-Engine drosselt CPU/GPU!"
     else
-        thermal_full_restore   # always restore first for clean state
+        # Default (thermal_disable=1 oder nicht gesetzt): Engine stoppen
+        thermal_full_disable
     fi
     # ── Battery spoof ────────────────────────────────────────────────────────
     spoof_battery
@@ -751,7 +786,7 @@ enter_battery() {
     w $GPU/bus_split             "1"
     w $GPU/min_pwrlevel          "5"
     w $GPU/max_pwrlevel          "4"
-    w $GPU/adreno_idler_active   "1"
+    # adreno_idler_active: not present on this kernel
     io_balanced
     sched_balanced
     w /proc/sys/vm/swappiness              "60"
@@ -789,10 +824,10 @@ enter_competitive() {
     w $GPU/max_pwrlevel            "0"   # 700MHz ceiling
     w $GPU/min_pwrlevel            "1"   # 596MHz floor (higher than gaming)
     w $GPU/devfreq/min_freq        "596000000"
-    w $GPU/devfreq/max_freq        "700000000"
+    w $GPU/devfreq/max_freq        "800000000"  # true max on this kernel
     w $GPU/devfreq/polling_interval "2"   # 2ms — fastest possible sampling
     w $GPU/thermal_pwrlevel        "0"
-    w $GPU/adreno_idler_active     "0"
+    # adreno_idler_active: not present on this kernel
     echo "0" > "$GPU/throttling" 2>/dev/null || true
     # ── I/O ──────────────────────────────────────────────────────────────────
     io_gaming
@@ -1084,6 +1119,14 @@ apply_gpu_driver
 LAST_CFG_MTIME=$(cfg_mtime)
 PREV_TEMP=$(thermal_cpu_temp)
 
+# irqbalance stoppen damit unsere IRQ-Affinität nicht sofort überschrieben wird
+stop irqbalance 2>/dev/null || true
+for _ib_pid in $(pgrep irqbalance 2>/dev/null); do
+    kill -9 "$_ib_pid" 2>/dev/null || true
+done
+log "irqbalance: stopped (SIGKILL)"
+apply_irq_affinity
+
 write_ping &
 enter_balanced
 write_data
@@ -1192,6 +1235,35 @@ while true; do
             battery)     TARGET="BATTERY"      ;;
             *)           TARGET="BALANCED"     ;;
         esac
+    fi
+
+    # ── CPU-Freq periodisch sichern (alle 9s im Gaming) ─────────────────────
+    # Thermal-Engine kann max_freq zurücksetzen → min wird geclampt → FROZEN
+    if [ "$STATE" = "GAMING" ] || [ "$STATE" = "COMPETITIVE" ]; then
+        if [ $(( TICK % 3 )) -eq 0 ]; then
+            # GPU min_freq sichern (thermal-engine kann es zurücksetzen)
+            _gpu_min=$(cat /sys/class/kgsl/kgsl-3d0/devfreq/min_freq 2>/dev/null)
+            [ "${_gpu_min:-0}" -lt 490000000 ] && {
+                [ -f "/sys/class/kgsl/kgsl-3d0/devfreq/min_freq" ] &&                     echo "490000000" > /sys/class/kgsl/kgsl-3d0/devfreq/min_freq 2>/dev/null
+                dbg "GPU min_freq war ${_gpu_min} → re-apply 490MHz"
+            }
+            _gmax=$(cat /sys/devices/system/cpu/cpu6/cpufreq/scaling_max_freq 2>/dev/null)
+            if [ "${_gmax:-0}" -lt 1785600 ]; then
+                dbg "Thermal-Engine hat Gold gecappt auf ${_gmax} → re-apply"
+                echo "1785600" > /sys/devices/system/cpu/cpu6/cpufreq/scaling_min_freq 2>/dev/null
+                echo "1785600" > /sys/devices/system/cpu/cpu7/cpufreq/scaling_min_freq 2>/dev/null
+                echo "2208000" > /sys/devices/system/cpu/cpu6/cpufreq/scaling_max_freq 2>/dev/null
+                echo "2208000" > /sys/devices/system/cpu/cpu7/cpufreq/scaling_max_freq 2>/dev/null
+            fi
+            _smax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)
+            if [ "${_smax:-0}" -lt 1248000 ]; then
+                dbg "Thermal-Engine hat Silver gecappt auf ${_smax} → re-apply"
+                for _c in 0 1 2 3 4 5; do
+                    echo "1248000" > /sys/devices/system/cpu/cpu${_c}/cpufreq/scaling_min_freq 2>/dev/null
+                    echo "1804800" > /sys/devices/system/cpu/cpu${_c}/cpufreq/scaling_max_freq 2>/dev/null
+                done
+            fi
+        fi
     fi
 
     # ── Thermal override ──────────────────────────────────────────────────────
