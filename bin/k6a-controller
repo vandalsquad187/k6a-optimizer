@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.6
+# k6a-controller  v7.6.1
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -385,6 +385,11 @@ sched_gaming() {
     # IRQ Affinity — vierstufig via apply_irq_affinity() (Touch/GPU→Gold, UFS/Net→Silver)
     # Kernel entropy: disable add_random for I/O (saves overhead during gaming)
     for q in /sys/block/*/queue/add_random; do w "$q" "0"; done
+    # VM: 32MB Reserve verhindert OOM-Killer mitten im Match (CoD lädt Texturen in Bursts)
+    sysctl -w vm.min_free_kbytes=32768                  2>/dev/null || true
+    # Performance Counter: CoD eigene Perf-Counter für Frame-Timing
+    sysctl -w kernel.perf_event_paranoid=-1             2>/dev/null || true
+    sysctl -w kernel.kptr_restrict=0                    2>/dev/null || true
     apply_irq_affinity
     log "Sched: WALT+schedtune+IRQ(Touch/GPU→Gold,UFS→3f,Net→fc)+msm_perf"
 }
@@ -394,6 +399,11 @@ sched_balanced() {
     w /dev/stune/top-app/schedtune.prefer_idle  "0"
     w /dev/stune/foreground/schedtune.boost     "0"
     echo "0-7" > /dev/cpuset/top-app/cpus       2>/dev/null || true
+    # Restore sysctl Gaming-Overrides
+    sysctl -w vm.min_free_kbytes=8192           2>/dev/null || true
+    sysctl -w kernel.perf_event_paranoid=3      2>/dev/null || true
+    sysctl -w kernel.kptr_restrict=2            2>/dev/null || true
+    sysctl -w net.ipv4.tcp_no_metrics_save=0    2>/dev/null || true
 }
 
 
@@ -462,6 +472,9 @@ net_gaming() {
     sysctl -w net.ipv4.tcp_fastopen=3                   2>/dev/null || true
     # Precise ping measurement
     sysctl -w net.ipv4.icmp_ratelimit=0                 2>/dev/null || true
+    # Verhindert dass TCP schlechte LTE-Metriken zwischen Matches cached
+    # → jeder Match startet mit frischen RTT/CWND-Werten
+    sysctl -w net.ipv4.tcp_no_metrics_save=1            2>/dev/null || true
 }
 
 net_restore() {
@@ -1019,10 +1032,14 @@ write_data() {
     mem_avail=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
     mem_used=$(( (mem_total - mem_avail) / 1024 ))
     mem_mb=$(( mem_total / 1024 ))
-    th_en=$(cfg thermal_disable);         th_en=${th_en:-0}
-    auto_en=$(cfg auto_detection);         auto_en=${auto_en:-0}
-    sp_en=$(cfg battery_spoof_enable);    sp_en=${sp_en:-0}
-    sp_t=$(cfg battery_spoof_temp);       sp_t=${sp_t:-1}
+    th_en=$(cfg thermal_disable);             th_en=${th_en:-0}
+    auto_en=$(cfg auto_detection);             auto_en=${auto_en:-0}
+    sp_en=$(cfg battery_spoof_enable);        sp_en=${sp_en:-0}
+    sp_t=$(cfg battery_spoof_temp);           sp_t=${sp_t:-1}
+    tp_en=$(cfg thermal_prediction_enable);   tp_en=${tp_en:-1}
+    pin_en=$(cfg thread_pin_enable);          pin_en=${pin_en:-1}
+    boot_d=$(cfg boot_delay);                 boot_d=${boot_d:-8}
+    dbg_en=$DEBUG
     freeze_line=$(grep -v "^#" "$FREEZE" 2>/dev/null | grep "=" | tr '\n' '|')
     log_line=$(tail -30 "$LOG" 2>/dev/null | tr '\n' '\x01')
 
@@ -1049,6 +1066,10 @@ write_data() {
         printf 'conf_auto=%s\n'          "$auto_en"
         printf 'conf_spoof_enable=%s\n'  "$sp_en"
         printf 'conf_spoof_temp=%s\n'    "$sp_t"
+        printf 'conf_thermal_pred=%s\n'  "$tp_en"
+        printf 'conf_thread_pin=%s\n'    "$pin_en"
+        printf 'conf_boot_delay=%s\n'    "$boot_d"
+        printf 'conf_debug=%s\n'         "$dbg_en"
         printf 'freeze=%s\n'             "$freeze_line"
         printf 'log=%s\n'                "$log_line"
     } > "${DATA}.tmp" && mv "${DATA}.tmp" "$DATA"
@@ -1073,7 +1094,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.6.1 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.1.1 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Gold=cpu6-7/policy6"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
