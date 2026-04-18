@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.4
+# k6a-controller  v7.5
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -28,8 +28,8 @@
 #
 # Hardware (confirmed via Termux):
 #   Silver  cpu0-5   policy0   max 1804800 Hz
-#   Prime   cpu6-7   policy6   max 2304000 Hz  ← confirmed 2304000, NOT 2208000
-#   GPU     Adreno 618   /sys/class/kgsl/kgsl-3d0   max 800MHz (8 pwrlevels)
+#   Gold    cpu6-7   policy6   max 2304000 Hz
+#   GPU     Adreno 618   /sys/class/kgsl/kgsl-3d0
 #   Kernel  Openela 4.14.356 — WALT scheduler, schedtune, CAF
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -114,20 +114,30 @@ DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 # Zones that must NEVER be touched — SM7150 hardware safety
 THERMAL_SAFE_PATTERN="touch|tsp|ts[0-9]|conn_therm|charger_therm|battery|bms|qcom-bms|quiet_therm|xo_therm|pa_therm|pm6150|pm6150l"
 
-# Stop thermal daemons — LickT style (SIGSTOP not SIGKILL)
+# Stop thermal daemons — SIGKILL auf Lunaris/Openela 4.14 (SIGSTOP wird ignoriert)
 thermal_stop_daemons() {
     local pid svc
-    # Stop via init service (survives reboot, won't restart while stopped)
+    # Stop via init first — verhindert automatischen Neustart durch init
     for svc in vendor.thermal-engine mi_thermald thermal-engine thermald; do
         stop "$svc" 2>/dev/null || true
     done
-    # SIGSTOP any remaining thermal process (LickT approach)
-    for pid in $(pgrep -f "thermal" 2>/dev/null); do
-        kill -SIGSTOP "$pid" 2>/dev/null || true
+    # Kurz warten — init braucht ~100ms um den Stop zu verarbeiten
+    sleep 0.2
+    # SIGKILL alle verbleibenden thermal Prozesse
+    # Auf Lunaris 3.8 / Openela 4.14 CAF ignoriert thermal-engine SIGSTOP
+    # und setzt scaling_max_freq beim Beenden zurück — SIGKILL verhindert das
+    for pid in $(pgrep -f "thermal-engine\|mi_thermald\|thermald" 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
     done
+    # irqbalance killen — PID 1190 bestätigt im Diagnose-Log
+    # irqbalance überschreibt unsere IRQ-Affinität nach jedem Balance-Zyklus
+    for pid in $(pidof irqbalance 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    stop irqbalance 2>/dev/null || true
     # thermalservice override: 0 = disable all throttling decisions from Java layer
     cmd thermalservice override-status 0 2>/dev/null || true
-    log "Thermal daemons: stopped (SIGSTOP)"
+    log "Thermal daemons: killed (SIGKILL) + irqbalance killed"
 }
 
 # Restore thermal daemons
@@ -182,34 +192,14 @@ thermal_full_restore() {
 }
 
 # Read highest CPU temperature in °C
-# On sweet_k6a with thermal_disable=1, cpu zones read 0 — fallback to pm6150-tz
-# (PMIC battery proxy, thermal_zone0, confirmed at 37°C = 37000 raw)
 thermal_cpu_temp() {
     local zone type temp best=0
-
-    # Primary: CPU/cpuss zones
-    for zone in /sys/devices/virtual/thermal/thermal_zone* \
-                /sys/class/thermal/thermal_zone*; do
-        [ -f "$zone/type" ] || continue
+    for zone in /sys/devices/virtual/thermal/thermal_zone*; do
         type=$(cat "$zone/type" 2>/dev/null) || continue
         echo "$type" | grep -qiE "^cpu[0-9]|^cpuss" || continue
         temp=$(cat "$zone/temp" 2>/dev/null || echo 0)
         [ "${temp:-0}" -gt "$best" ] && best="$temp"
     done
-
-    # Fallback: wenn alle CPU-Zones 0 lesen (thermal_disable=1 disabled sie),
-    # pm6150-tz (zone0) als Battery-Proxy nutzen — bestätigt: 37000 = 37°C
-    if [ "$best" -le 0 ]; then
-        for zone in /sys/devices/virtual/thermal/thermal_zone* \
-                    /sys/class/thermal/thermal_zone*; do
-            [ -f "$zone/type" ] || continue
-            type=$(cat "$zone/type" 2>/dev/null) || continue
-            echo "$type" | grep -qiE "^pm6150-tz$" || continue
-            best=$(cat "$zone/temp" 2>/dev/null || echo 0)
-            break
-        done
-    fi
-
     printf '%d' $(( best / 1000 ))
 }
 
@@ -289,9 +279,7 @@ schedutil_set() {
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GPU CONTROLLER — Adreno 618
-# Confirmed available_frequencies on sweet_k6a Openela 4.14:
-# 140 180 267 355 430 565 650 800 MHz
-# pwrlevels (0=highest): 0=800 1=650 2=565 3=430 4=355 5=267 6=180 7=140 MHz
+# pwrlevels: 0=700 1=596 2=490 3=414 4=342 5=257 MHz
 # ═══════════════════════════════════════════════════════════════════════════════
 gpu_gaming() {
     w $GPU/devfreq/governor        "msm-adreno-tz"
@@ -299,17 +287,18 @@ gpu_gaming() {
     # force_bus_on=1: GPU-Memory-Bus bleibt aktiv — keine Aufwach-Latenz
     w $GPU/force_bus_on            "1" 2>/dev/null || true
     w $GPU/bus_split               "0"
-    w $GPU/max_pwrlevel            "0"   # 800 MHz ceiling (confirmed on sweet_k6a)
-    # min_pwrlevel=3 (430MHz): faster ramp to 800MHz vs lower floor
-    # 430MHz → 800MHz needs ~1 frame; 267MHz needs ~3 frames
-    w $GPU/min_pwrlevel            "3"
-    w $GPU/devfreq/min_freq        "430000000"   # 430MHz floor (was wrong: 490MHz not a valid step)
-    w $GPU/devfreq/max_freq        "800000000"   # Kernel max = 800MHz on sweet_k6a (confirmed)
+    w $GPU/max_pwrlevel            "0"   # 700 MHz ceiling
+    # min_pwrlevel=2 (490MHz): faster ramp to 700MHz vs pwrlevel=4 (342MHz)
+    # 342MHz needed ~3 frames to reach 700MHz; 490MHz needs ~1 frame
+    w $GPU/min_pwrlevel            "2"
+    w $GPU/devfreq/min_freq        "430000000"  # 430MHz = valid step
+    w $GPU/devfreq/max_freq        "800000000"   # Kernel max = 800MHz on sweet_k6a
     w $GPU/devfreq/polling_interval "5"   # 5ms vs default 10ms
     w $GPU/devfreq/adrenoboost      "3"   # not present on all sweet_k6a kernels — ignored if absent
     w $GPU/thermal_pwrlevel        "0"   # don't let thermal subsystem cap GPU
     w $GPU/adreno_idler_active     "0"   # not present on Openela 4.14 — ignored if absent
     # throttling=0: verhindert KGSL-internen Throttle-Mechanismus
+    # Node existiert nur auf manchen SM7150-Kernels — || true für Sicherheit
     echo "0" > "$GPU/throttling" 2>/dev/null || true
 }
 
@@ -339,8 +328,9 @@ gpu_balanced() {
 #   Net  (wlan/rmnet)→ Silver (0xfc): Paket-ISR von Gold fernhalten
 # ═══════════════════════════════════════════════════════════════════════════════
 apply_irq_affinity() {
-    # irqbalance stoppen — verhindert Überschreiben unserer Affinität
-    # SIGKILL ist sicherer als SIGSTOP auf manchen CAF-Kernels
+    # irqbalance killen — auf Lunaris 3.8 läuft irqbalance als PID ~1190
+    # und überschreibt unsere Affinität alle paar Sekunden.
+    # stop + SIGKILL: verhindert dass init es sofort neu startet
     stop irqbalance 2>/dev/null || true
     local ib_pid
     for ib_pid in $(pidof irqbalance 2>/dev/null); do
@@ -597,18 +587,17 @@ tune_codm() {
         thread_name=$(cat "/proc/$main_pid/task/$tid/comm" 2>/dev/null)
         case "$thread_name" in
             *RenderThread*|*UnityMain*|*GLThread*|*mali*render*)
-                # 0xc0 = cpu6 + cpu7 (Prime-Kerne) — kein Silver-Fallback
+                # 0xc0 = cpu6 + cpu7 (Gold-Kerne) — kein Silver-Fallback
                 taskset -p 0xc0 "$tid" >/dev/null 2>&1
-                dbg "Pinned $thread_name (tid $tid) → Prime (0xc0)"
+                dbg "Pinned $thread_name (tid $tid) → Gold (0xc0)"
                 ;;
             *UnityGfx*|*Worker*Thread*|*JobWorker*)
-                # BUG FIX: War 0xff (alle Cores) — Worker auf Prime verdrängte RenderThread!
-                # Jetzt 0x3f (Silver only) — Prime exklusiv für Render/Main
-                taskset -p 0x3f "$tid" >/dev/null 2>&1
-                dbg "Worker $thread_name (tid $tid) → Silver (0x3f)"
+                # Worker auf alle Kerne — kein Engpass durch Pinning
+                taskset -p 0xff "$tid" >/dev/null 2>&1
+                dbg "Worker $thread_name (tid $tid) → alle Kerne (0xff)"
                 ;;
             *AudioMixer*|*AudioTrack*|*AudioFlinger*)
-                # Audio auf Silver — unterbricht Prime-RenderThread nicht
+                # Audio auf Silver — unterbricht Gold-RenderThread nicht
                 taskset -p 0x3f "$tid" >/dev/null 2>&1  # 0x3f = cpu0-5
                 dbg "Audio $thread_name (tid $tid) → Silver (0x3f)"
                 ;;
@@ -631,8 +620,8 @@ tune_codm() {
 # ═══════════════════════════════════════════════════════════════════════════════
 THERMAL_PREDICT_TEMP=75      # °C — Vorhersage-Schwelle
 THERMAL_PREDICT_RATE=3       # °C/Tick — Steigerungsrate-Schwelle
-GOLD_MAX_NORMAL="2304000"    # confirmed max on sweet_k6a (was wrong: 2208000)
-GOLD_MAX_CAP="1881600"       # ~82% of 2304000 — proportional cap (was 1785600 for 2208000)
+GOLD_MAX_NORMAL="2304000"  # confirmed sweet_k6a
+GOLD_MAX_CAP="1785600"
 THERMAL_CAPPED=0
 PREV_TEMP=-1   # -1 = nicht initialisiert — verhindert falschen Rate-Spike beim ersten Tick
 
@@ -669,7 +658,7 @@ thermal_predict_check() {
     elif [ "$THERMAL_CAPPED" = "1" ] && [ "$curr_temp" -lt "$THERMAL_PREDICT_TEMP" ]; then
         w /sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq "$GOLD_MAX_NORMAL"
         THERMAL_CAPPED=0
-        log "THERMAL_PREDICT aufgehoben: ${curr_temp}°C < ${THERMAL_PREDICT_TEMP}°C → Prime normal (2304000)"
+        log "THERMAL_PREDICT aufgehoben: ${curr_temp}°C < ${THERMAL_PREDICT_TEMP}°C → Gold normal"
     fi
 }
 
@@ -724,7 +713,6 @@ enter_gaming() {
     # up_rate_limit_us=0:   no delay ramping UP   (instant on burst load)
     # down_rate_limit_us=800: hold high for 800µs (one ~120fps frame window)
     # hispeed_load=1: go to hispeed_freq at 1% load — effectively always boosted
-    # Prime max = 2304000 (confirmed on sweet_k6a, NOT 2208000)
     cpu_set "schedutil" "1248000" "1804800" "1785600" "2304000"
     # up_rate=0:    instant ramp on any load spike (no delay)
     # down_rate Silver=8000µs: hold freq 8ms after burst (audio/net threads)
@@ -751,6 +739,19 @@ enter_gaming() {
     # ── Thermal — LickT approach ─────────────────────────────────────────────
     if [ "$(cfg thermal_disable)" = "1" ]; then
         thermal_full_disable
+        # KRITISCH: thermal-engine überschreibt scaling_max/min beim Beenden.
+        # Nach dem Kill nochmal CPU + GPU setzen — das ist der Grund für FROZEN CPUs.
+        # 300ms warten: sicherstellen dass der Kill-Prozess abgeschlossen ist
+        sleep 0.3
+        cpu_set "schedutil" "1248000" "1804800" "1785600" "2304000"
+        schedutil_set "1" "1804800" "0" "12000" \
+                      "1" "2304000" "0" "10000"
+        # GPU min_freq wird von thermal-engine auf 267MHz zurückgesetzt — nochmal setzen
+        w $GPU/devfreq/min_freq     "430000000"
+        w $GPU/devfreq/max_freq     "800000000"
+        w $GPU/min_pwrlevel         "3"
+        w $GPU/force_clk_on         "1"
+        log "CPU+GPU re-applied after thermal daemon kill"
     else
         thermal_full_restore   # always restore first for clean state
     fi
@@ -783,7 +784,7 @@ enter_gaming() {
     # Mehr freien RAM für burst allocations (CoD lädt Assets ruckartig)
     # 24576KB = 24MB Reserve unterhalb LMK-Trigger
     w /proc/sys/vm/extra_free_kbytes "24576"
-    # Thread Pinning: RenderThread+UnityMain → Prime (0xc0), Worker → Silver (0x3f)
+    # Thread Pinning: RenderThread+UnityMain → Gold (0xc0), Worker → alle (0xff)
     tune_codm
     THERMAL_CAPPED=0
     printf '%s' "gaming" > "$PROFILE"
@@ -824,23 +825,23 @@ enter_battery() {
 
 enter_competitive() {
     log "→ COMPETITIVE (Extreme Ranked Mode)"
-    # ── CPU: Prime pinned near max, Silver high floor ──────────────────────────
+    # ── CPU: Gold pinned near max, Silver high floor ──────────────────────────
     # performance governor: zero scheduling latency, no governor delay
     # Prime: min=2188800 (95% of max 2304000) — stays near ceiling
     # Silver: min=1593600 — all threads get fast A55 cores
     cpu_set "performance" "1593600" "1804800" "2188800" "2304000"
     # No schedutil tunables needed — performance governor ignores them
     # ── GPU: fixed at near-max — no devfreq variation ─────────────────────────
-    # Adreno 618 sweet_k6a: pwrlevel 0=800MHz, 1=650MHz (confirmed frequencies)
-    # Force to pwrlevel=1 (650MHz) floor — msm-adreno-tz bursts to 800MHz freely
+    # Adreno 618: force to pwrlevel=1 (596MHz) sustained
+    # msm-adreno-tz can still burst to 700MHz from there
     w $GPU/devfreq/governor        "msm-adreno-tz"
     w $GPU/force_clk_on            "1"
     w $GPU/force_bus_on            "1" 2>/dev/null || true
     w $GPU/bus_split               "0"
-    w $GPU/max_pwrlevel            "0"   # 800MHz ceiling (confirmed)
-    w $GPU/min_pwrlevel            "1"   # 650MHz floor (was wrong: 596MHz doesn't exist)
-    w $GPU/devfreq/min_freq        "650000000"   # 650MHz (was wrong: 596000000 not valid)
-    w $GPU/devfreq/max_freq        "800000000"   # 800MHz (was wrong: 700000000)
+    w $GPU/max_pwrlevel            "0"   # 700MHz ceiling
+    w $GPU/min_pwrlevel            "1"   # 596MHz floor (higher than gaming)
+    w $GPU/devfreq/min_freq        "650000000"  # 650MHz = valid step
+    w $GPU/devfreq/max_freq        "800000000"  # 800MHz = kernel max
     w $GPU/devfreq/polling_interval "2"   # 2ms — fastest possible sampling
     w $GPU/thermal_pwrlevel        "0"
     w $GPU/adreno_idler_active     "0"   # not present on Openela 4.14 — ignored if absent
@@ -874,8 +875,7 @@ enter_competitive() {
     local IB=/sys/module/cpu_boost/parameters
     if [ -d "$IB" ]; then
         w "$IB/input_boost_enabled" "1"
-        printf '%s' "0:1593600 1:1593600 2:1593600 3:1593600 4:1593600 5:1593600 6:2188800 7:2188800" \
-            > "$IB/input_boost_freq" 2>/dev/null || true
+        printf '%s' "0:1593600 1:1593600 2:1593600 3:1593600 4:1593600 5:1593600 6:2092800 7:2092800"             > "$IB/input_boost_freq" 2>/dev/null || true
         w "$IB/input_boost_ms" "60"
     fi
     local irq_dir irq_name
@@ -901,7 +901,7 @@ enter_competitive() {
     THERMAL_CAPPED=0
     printf '%s' "gaming" > "$PROFILE"
     STATE="COMPETITIVE"
-    log "COMPETITIVE: Prime≥2188800 Silver≥1593600 GPU≥650MHz/800max | thermal=OFF | fixed-perf"
+    log "COMPETITIVE: Gold≥2092800 Silver≥1593600 GPU≥596MHz | thermal=OFF | fixed-perf"
 }
 
 enter_thermal_limit() {
@@ -1133,8 +1133,8 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.4 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
-log "Topology: Silver=cpu0-5/policy0(max1804MHz) Prime=cpu6-7/policy6(max2304MHz)"
+log "k6a-controller v7.5 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "Topology: Silver=cpu0-5/policy0 Prime=cpu6-7/policy6(max2304MHz)"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
 # GPU Driver zur Laufzeit prüfen und setzen (ersetzt system.prop boot-time prop)
@@ -1262,8 +1262,39 @@ while true; do
         thermal_predict_check
         # Thread-Pinning periodisch auffrischen (neue Threads können spawnen)
         [ $(( TICK % 3 )) -eq 0 ] && tune_codm
-        # IRQ-Affinität periodisch auffrischen (Kernel kann sie nach suspend zurücksetzen)
+        # IRQ-Affinität periodisch auffrischen + irqbalance re-killen
+        # irqbalance wird von init manchmal neu gestartet — alle 30s prüfen
         [ $(( TICK % 10 )) -eq 0 ] && apply_irq_affinity
+
+        # ── CPU-Freeze Watchdog ───────────────────────────────────────────────
+        # Diagnose-Log zeigte: cpu0-5 frozen auf 1017600, cpu6-7 auf 1094400
+        # Ursache: thermal-engine schreibt scaling_max beim Beenden zurück.
+        # Lösung: alle 15 Ticks (~45s) prüfen ob CPUs eingefroren sind.
+        # "Frozen" = scaling_min == scaling_max (thermal hat sie auf denselben Wert gesetzt)
+        if [ $(( TICK % 15 )) -eq 0 ]; then
+            _cur_min=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 2>/dev/null || echo 0)
+            _cur_max=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq 2>/dev/null || echo 1)
+            if [ "$_cur_min" = "$_cur_max" ] || [ "$_cur_max" -lt "1400000" ]; then
+                log "CPU FREEZE DETECTED (Silver max=${_cur_max}) — re-applying CPU+GPU"
+                # irqbalance könnte neu gestartet worden sein
+                for _ib in $(pidof irqbalance 2>/dev/null); do kill -9 "$_ib" 2>/dev/null || true; done
+                stop irqbalance 2>/dev/null || true
+                # CPU + GPU neu setzen
+                if [ "$STATE" = "COMPETITIVE" ]; then
+                    cpu_set "performance" "1593600" "1804800" "2188800" "2304000"
+                else
+                    cpu_set "schedutil" "1248000" "1804800" "1785600" "2304000"
+                    schedutil_set "1" "1804800" "0" "12000" \
+                                  "1" "2304000" "0" "10000"
+                fi
+                w $GPU/devfreq/min_freq  "430000000"
+                w $GPU/devfreq/max_freq  "800000000"
+                w $GPU/min_pwrlevel      "3"
+                w $GPU/force_clk_on      "1"
+                apply_irq_affinity
+                log "CPU+GPU+IRQ recovered from freeze"
+            fi
+        fi
     fi
 
     # ── State transition — only on change ─────────────────────────────────────
