@@ -69,6 +69,23 @@ jobs:
           cargo build --release --target aarch64-linux-android
           ls -lh target/aarch64-linux-android/release/k6a-daemon
 
+      - name: Fix line endings (LF only — Android shell requirement)
+        run: |
+          for f in bin/k6a-controller service.sh boot-completed.sh customize.sh post-fs-data.sh; do
+            if [ -f "$f" ]; then
+              sed -i 's/\r//' "$f"
+              echo "✓ LF fix: $f"
+            fi
+          done
+
+      - name: Verify shell scripts (syntax check)
+        run: |
+          for f in bin/k6a-controller service.sh boot-completed.sh customize.sh post-fs-data.sh; do
+            if [ -f "$f" ]; then
+              bash -n "$f" && echo "✓ syntax ok: $f" || { echo "✗ syntax error: $f"; exit 1; }
+            fi
+          done
+
       - name: Read version from module.prop
         id: version
         run: |
@@ -100,13 +117,19 @@ jobs:
           cp icon/icon.png        "$STAGING/icon/icon.png"
 
           # ── Binaries ──────────────────────────────────────────────────────
-          # k6a-daemon: frisch gebaut von Rust CI
           cp "$DAEMON"            "$STAGING/bin/k6a-daemon"
           chmod 755               "$STAGING/bin/k6a-daemon"
 
-          # k6a-controller: Shell-Script aus Repo (kein Build nötig)
           cp bin/k6a-controller   "$STAGING/bin/k6a-controller"
           chmod 755               "$STAGING/bin/k6a-controller"
+
+          cp service.sh           "$STAGING/service.sh"
+          chmod 755               "$STAGING/service.sh"
+
+          # ── Checksums für Verifikation ────────────────────────────────────
+          echo "=== MD5 Checksums ==="
+          md5sum "$STAGING/bin/k6a-controller"
+          md5sum "$STAGING/service.sh"
 
           # ── ZIP packen ────────────────────────────────────────────────────
           cd "$STAGING"

@@ -1,3 +1,7 @@
 * text=auto eol=lf
 *.sh text eol=lf
+*.prop text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.toml text eol=lf
 k6a-controller text eol=lf
