@@ -1,0 +1,3 @@
+* text=auto eol=lf
+*.sh text eol=lf
+k6a-controller text eol=lf
