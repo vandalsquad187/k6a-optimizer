@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.6
+# k6a-controller  v7.7
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -117,28 +117,69 @@ THERMAL_SAFE_PATTERN="touch|tsp|ts[0-9]|conn_therm|charger_therm|battery|bms|qco
 # Stop thermal daemons — LickT style (SIGSTOP not SIGKILL)
 thermal_stop_daemons() {
     local pid svc
-    # Stop via init service (survives reboot, won't restart while stopped)
+
+    # ── Schritt 1: init-Services stoppen ────────────────────────────────────
     for svc in vendor.thermal-engine mi_thermald thermal-engine thermald; do
         stop "$svc" 2>/dev/null || true
     done
-    # SIGSTOP any remaining thermal process (LickT approach)
-    for pid in $(pgrep -f "thermal" 2>/dev/null); do
-        kill -SIGSTOP "$pid" 2>/dev/null || true
+    sleep 0.2
+
+    # ── Schritt 2: SIGKILL — kein SIGSTOP (ignoriert auf Lunaris 3.8 CAF) ──
+    for pid in $(pgrep -f "thermal-engine\|mi_thermald\|thermald" 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
     done
-    # thermalservice override: 0 = disable all throttling decisions from Java layer
+
+    # ── Schritt 3: Bind-Mount — verhindert dass init thermal-engine neu startet
+    # init kann einen gestoppten Service neu starten wenn er crasht oder
+    # eine andere Komponente ihn anfordert. Bind-Mount auf /bin/true macht
+    # thermal-engine zum No-Op: init startet es, es läuft sofort durch ohne
+    # jemals scaling_max_freq zu schreiben.
+    local te_bin
+    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine; do
+        [ -f "$te_bin" ] || continue
+        # Nur mounten wenn nicht bereits gemountet (verhindert doppelte Mounts)
+        mount | grep -q "$te_bin" && continue
+        mount --bind /bin/true "$te_bin" 2>/dev/null && \
+            log "Bind-mount: $te_bin → /bin/true" || true
+    done
+
+    # ── Schritt 4: irqbalance — Service-Name aus init.rc ermitteln ──────────
+    # Auf Lunaris 3.8 kann der Service-Name abweichen. Alle bekannten Namen:
+    local ib_svc
+    for ib_svc in irqbalance vendor.irqbalance irqbalance.default; do
+        stop "$ib_svc" 2>/dev/null || true
+        # Service explizit disablen — überlebt stop/start Zyklen
+        setprop ctl.stop "$ib_svc" 2>/dev/null || true
+    done
+    # SIGKILL alle laufenden irqbalance Instanzen
+    for pid in $(pidof irqbalance 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+
     cmd thermalservice override-status 0 2>/dev/null || true
-    log "Thermal daemons: stopped (SIGSTOP)"
+    log "Thermal daemons: killed (SIGKILL) + bind-mount + irqbalance killed"
 }
 
 # Restore thermal daemons
 thermal_restore_daemons() {
-    local pid
-    for pid in $(pgrep -f "thermal" 2>/dev/null); do
-        kill -SIGCONT "$pid" 2>/dev/null || true
+    local pid svc te_bin
+
+    # ── Bind-Mount entfernen — thermal-engine läuft wieder normal ───────────
+    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine; do
+        mount | grep -q "$te_bin" && \
+            umount "$te_bin" 2>/dev/null || true
     done
+
+    # ── irqbalance wieder starten ────────────────────────────────────────────
+    for svc in irqbalance vendor.irqbalance irqbalance.default; do
+        start "$svc" 2>/dev/null || true
+    done
+
+    # ── thermal-engine wieder starten ───────────────────────────────────────
     for svc in vendor.thermal-engine mi_thermald thermal-engine thermald; do
         start "$svc" 2>/dev/null || true
     done
+
     cmd thermalservice reset 2>/dev/null || true
     log "Thermal daemons: restored"
 }
@@ -318,13 +359,8 @@ gpu_balanced() {
 #   Net  (wlan/rmnet)→ Silver (0xfc): Paket-ISR von Gold fernhalten
 # ═══════════════════════════════════════════════════════════════════════════════
 apply_irq_affinity() {
-    # irqbalance permanent deaktivieren:
-    # 1. setprop persist.vendor.irqbalance 0 — überlebt Reboot
-    # 2. stop irqbalance — init stoppt den Service
-    # 3. SIGKILL alle laufenden Instanzen
-    # Ohne persist.prop startet init irqbalance neu (bestätigt: PID 1185 nach kill)
-    setprop persist.vendor.irqbalance 0 2>/dev/null || true
-    setprop persist.device_config.irqbalance 0 2>/dev/null || true
+    # irqbalance stoppen — verhindert Überschreiben unserer Affinität
+    # SIGKILL ist sicherer als SIGSTOP auf manchen CAF-Kernels
     stop irqbalance 2>/dev/null || true
     local ib_pid
     for ib_pid in $(pidof irqbalance 2>/dev/null); do
@@ -410,7 +446,7 @@ sched_gaming() {
     # msm_performance: hard freq override (Qualcomm HAL, independent of governor)
     local MP=/sys/module/msm_performance/parameters
     if [ -d "$MP" ]; then
-        printf '%s' "0:1804800 1:1804800 2:1804800 3:1804800 4:1804800 5:1804800 6:2208000 7:2208000" \
+        printf '%s' "0:1804800 1:1804800 2:1804800 3:1804800 4:1804800 5:1804800 6:2304000 7:2304000" \
             > "$MP/cpu_max_freq" 2>/dev/null || true
         printf '%s' "0:1248000 1:1248000 2:1248000 3:1248000 4:1248000 5:1248000 6:1785600 7:1785600" \
             > "$MP/cpu_min_freq" 2>/dev/null || true
@@ -534,10 +570,7 @@ spoof_battery() {
     [ "$(cfg battery_spoof_enable)" = "1" ] || return 0
     local c raw
     c=$(cfg battery_spoof_temp); c=${c:-1}
-    # Android battery/temp Node erwartet Milligrad (1/1000°C)
-    # c*10 war falsch → 10°C wurde als 0.01°C gelesen (raw=10, display=1°C)
-    # Korrekt: 10°C = 10000 raw
-    raw=$(( c * 1000 ))
+    raw=$(( c * 10 ))
     for node in /sys/class/power_supply/battery/temp \
                 /sys/class/power_supply/bms/temp; do
         [ -f "$node" ] && printf '%s\n' "$raw" > "$node" 2>/dev/null
@@ -617,7 +650,7 @@ tune_codm() {
 # ═══════════════════════════════════════════════════════════════════════════════
 THERMAL_PREDICT_TEMP=75      # °C — Vorhersage-Schwelle
 THERMAL_PREDICT_RATE=3       # °C/Tick — Steigerungsrate-Schwelle
-GOLD_MAX_NORMAL="2208000"
+GOLD_MAX_NORMAL="2304000"
 GOLD_MAX_CAP="1785600"
 THERMAL_CAPPED=0
 PREV_TEMP=-1   # -1 = nicht initialisiert — verhindert falschen Rate-Spike beim ersten Tick
@@ -670,7 +703,7 @@ enter_balanced() {
     # CPU: minimal floor, full headroom, let schedutil decide
     # Silver cpu0-5: min=300 max=1804800
     # Gold   cpu6-7: min=300 max=2208000
-    cpu_set "schedutil" "300000" "1804800" "300000" "2208000"
+    cpu_set "schedutil" "300000" "1804800" "300000" "2304000"
     # schedutil: conservative — hispeed at 80% load, standard rates
     schedutil_set "80" "1248000" "4000" "16000" \
                   "75" "1574400" "2000" "8000"
@@ -706,19 +739,24 @@ enter_balanced() {
 
 enter_gaming() {
     log "→ GAMING"
-    # ── CPU: set min floors, let schedutil boost above them freely ────────────
-    # up_rate_limit_us=0:   no delay ramping UP   (instant on burst load)
-    # down_rate_limit_us=800: hold high for 800µs (one ~120fps frame window)
-    # hispeed_load=1: go to hispeed_freq at 1% load — effectively always boosted
-    cpu_set "schedutil" "1248000" "1804800" "1785600" "2208000"
-    # up_rate=0:    instant ramp on any load spike (no delay)
-    # down_rate Silver=8000µs: hold freq 8ms after burst (audio/net threads)
-    # down_rate Gold=10000µs: hold freq 10ms after frame burst (less bouncing)
-    # Silver down_rate=12ms: etwas länger halten als 8ms
-    # Verhindert Stutter bei Audio-Thread-Spikes (Schüsse, Explosionen)
-    # Gold down_rate=10ms via schedutil_set, dann 20ms override in sched_gaming
+
+    # ── Thermal ZUERST deaktivieren ──────────────────────────────────────────
+    # KRITISCH: thermal-engine muss TOT sein bevor wir cpu_set schreiben.
+    # Sonst: thermal-engine überschreibt scaling_max_freq innerhalb von ms.
+    # Bind-Mount verhindert Neustart durch init.
+    if [ "$(cfg thermal_disable)" = "1" ]; then
+        thermal_full_disable
+        # 300ms warten: sicherstellen dass thermal-engine-Prozess beendet ist
+        # und keine pending writes mehr in der Kernel-Queue sind
+        sleep 0.3
+    else
+        thermal_full_restore
+    fi
+
+    # ── CPU: jetzt sicher setzen (thermal-engine ist tot) ────────────────────
+    cpu_set "schedutil" "1248000" "1804800" "1785600" "2304000"
     schedutil_set "1" "1804800" "0" "12000" \
-                  "1" "2208000" "0" "10000"
+                  "1" "2304000" "0" "10000"
     # ── GPU ──────────────────────────────────────────────────────────────────
     gpu_gaming
     # ── I/O ──────────────────────────────────────────────────────────────────
@@ -733,12 +771,6 @@ enter_gaming() {
     # ART GC: shorter but more frequent pauses (no long stop-the-world)
     setprop dalvik.vm.heaptargetutilization 0.75 2>/dev/null || true
     setprop dalvik.vm.heapmaxfree           8m   2>/dev/null || true
-    # ── Thermal — LickT approach ─────────────────────────────────────────────
-    if [ "$(cfg thermal_disable)" = "1" ]; then
-        thermal_full_disable
-    else
-        thermal_full_restore   # always restore first for clean state
-    fi
     # ── Battery spoof ────────────────────────────────────────────────────────
     spoof_battery
     # ── Bypass power supply ──────────────────────────────────────────────────
@@ -813,7 +845,7 @@ enter_competitive() {
     # performance governor: zero scheduling latency, no governor delay
     # Gold: min=2092800 (95% of max 2208000) — stays near ceiling
     # Silver: min=1593600 — all threads get fast A55 cores
-    cpu_set "performance" "1593600" "1804800" "2092800" "2208000"
+    cpu_set "performance" "1593600" "1804800" "2188800" "2304000"
     # No schedutil tunables needed — performance governor ignores them
     # ── GPU: fixed at near-max — no devfreq variation ─────────────────────────
     # Adreno 618: force to pwrlevel=1 (596MHz) sustained
@@ -1117,7 +1149,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.6.1 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.7.1 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Gold=cpu6-7/policy6"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
@@ -1243,36 +1275,58 @@ while true; do
         temp=$(thermal_cpu_temp)
         [ "${temp:-0}" -ge 84 ] && TARGET="THERMAL_LIMIT"
         thermal_predict_check
-        # Thread-Pinning alle 3 Ticks (~9s) auffrischen
+
+        # Thread-Pinning alle 3 Ticks (~9s)
         [ $(( TICK % 3 )) -eq 0 ] && tune_codm
-        # IRQ-Affinität alle 3 Ticks (~9s) — irqbalance (PID 1185) setzt sie sonst zurück
-        # War: alle 10 Ticks — zu selten, irqbalance überschreibt in <10s
+
+        # IRQ-Affinität alle 3 Ticks (~9s) — irqbalance überschreibt in <10s
         [ $(( TICK % 3 )) -eq 0 ] && apply_irq_affinity
 
-        # ── GPU min_freq Watchdog (alle 5 Ticks = ~15s) ───────────────────────
-        # Diagnose zeigte: devfreq/min_freq = 267MHz nach gpu_gaming() schrieb 430MHz
-        # Etwas überschreibt den Wert nach dem re-apply. Watchdog korrigiert das.
-        if [ $(( TICK % 5 )) -eq 0 ]; then
+        # ── GPU Floor Watchdog (alle 2 Ticks = ~6s) ──────────────────────────
+        # Diagnose: min_freq=267MHz nach gpu_gaming schrieb 430MHz
+        # thermal_pwrlevel=1 cappt GPU auf 650MHz — watchdog setzt thermal_pwrlevel=0
+        if [ $(( TICK % 2 )) -eq 0 ]; then
             _gpu_min=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
             _gpu_clk=$(cat $GPU/force_clk_on 2>/dev/null || echo 1)
-            if [ "$_gpu_min" -lt "430000000" ] || [ "$_gpu_clk" = "0" ]; then
-                dbg "GPU min_freq=${_gpu_min} force_clk=${_gpu_clk} — re-applying GPU floor"
+            _gpu_tpwrl=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 0)
+            if [ "$_gpu_min" -lt "430000000" ] || [ "$_gpu_clk" = "0" ] || [ "$_gpu_tpwrl" -gt "0" ]; then
+                dbg "GPU correcting: min=${_gpu_min} clk=${_gpu_clk} thermal_pwrlevel=${_gpu_tpwrl}"
+                w $GPU/thermal_pwrlevel     "0"
                 w $GPU/devfreq/min_freq     "430000000"
                 w $GPU/devfreq/max_freq     "800000000"
                 w $GPU/min_pwrlevel         "3"
                 w $GPU/force_clk_on         "1"
+                w $GPU/force_bus_on         "1"
+                w $GPU/throttling           "0"
                 w $GPU/devfreq/polling_interval "5"
             fi
         fi
 
-        # ── CPU-Freeze Watchdog (alle 15 Ticks = ~45s) ───────────────────────
-        if [ $(( TICK % 15 )) -eq 0 ]; then
+        # ── CPU-Freeze Watchdog (alle 3 Ticks = ~9s) ─────────────────────────
+        # Diagnose: thermal-engine schreibt scaling_max alle paar Sekunden zurück
+        # 1497600 (Silver) und 1555200 (Prime) = thermal-engine Cap-Werte
+        # War: alle 15 Ticks (45s) → zu langsam, thermal-engine ist schneller
+        if [ $(( TICK % 3 )) -eq 0 ]; then
+            _cur_max=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq 2>/dev/null || echo 9999999)
             _cur_min=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 2>/dev/null || echo 0)
-            _cur_max=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq 2>/dev/null || echo 1)
-            if [ "$_cur_min" = "$_cur_max" ] || [ "$_cur_max" -lt "1400000" ]; then
-                log "CPU FREEZE DETECTED (Silver max=${_cur_max}) — re-applying CPU+GPU"
-                for _ib in $(pidof irqbalance 2>/dev/null); do kill -9 "$_ib" 2>/dev/null || true; done
-                stop irqbalance 2>/dev/null || true
+            # Freeze erkannt wenn: max < 1700MHz (thermal-engine hat gecappt)
+            # oder min == max (komplett eingefroren)
+            if [ "$_cur_max" -lt "1700000" ] || [ "$_cur_min" = "$_cur_max" ]; then
+                log "CPU FREEZE (Silver max=${_cur_max}) — re-kill thermal + re-apply"
+                # Nochmal killen — thermal-engine könnte neu gestartet worden sein
+                for _te in $(pgrep -f "thermal-engine\|mi_thermald" 2>/dev/null); do
+                    kill -9 "$_te" 2>/dev/null || true
+                done
+                for _ib in $(pidof irqbalance 2>/dev/null); do
+                    kill -9 "$_ib" 2>/dev/null || true
+                done
+                # Bind-Mount nochmal sicherstellen
+                for _te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine; do
+                    [ -f "$_te_bin" ] || continue
+                    mount | grep -q "$_te_bin" && continue
+                    mount --bind /bin/true "$_te_bin" 2>/dev/null || true
+                done
+                # CPU + GPU neu setzen
                 if [ "$STATE" = "COMPETITIVE" ]; then
                     cpu_set "performance" "1593600" "1804800" "2188800" "2304000"
                 else
@@ -1280,12 +1334,14 @@ while true; do
                     schedutil_set "1" "1804800" "0" "12000" \
                                   "1" "2304000" "0" "10000"
                 fi
+                w $GPU/thermal_pwrlevel  "0"
                 w $GPU/devfreq/min_freq  "430000000"
                 w $GPU/devfreq/max_freq  "800000000"
                 w $GPU/min_pwrlevel      "3"
                 w $GPU/force_clk_on      "1"
+                w $GPU/throttling        "0"
                 apply_irq_affinity
-                log "CPU+GPU+IRQ recovered from freeze"
+                log "CPU+GPU+IRQ recovered"
             fi
         fi
     fi
