@@ -8,8 +8,8 @@
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 :root {
   /* Tricky Addon inspiriertes Rot-Theme */
-  --bg:     #0d0608;          /* fast schwarz mit Rot-Unterton */
-  --card:   #160a0b;          /* Kacheln: tief-dunkelrot */
+  --bg:     #30161d;          /* fast schwarz mit Rot-Unterton */
+  --card:   #1e0e13;          /* Kacheln: tief-dunkelrot */
   --border: #2e1215;          /* Rahmen: sichtbares Dunkelrot */
   --accent: #e53935;          /* Primär-Akzent: sattes Rot */
   --accent2: #ff6b35;         /* Sekundär: Orange-Rot (Tricky Addon Logo) */
@@ -25,7 +25,11 @@
 body {
   background: var(--bg);
   /* Subtiler Vignetten-Effekt */
-  background-image: radial-gradient(ellipse at top, #1a0608 0%, #0d0608 70%);
+background-image: radial-gradient(
+  ellipse at top,
+  rgba(30,14,19,0.2) 0%,
+  rgba(30,14,19,0.6) 70%
+);
   color: var(--text);
   font-family: system-ui, sans-serif;
   font-size: 14px;
@@ -38,7 +42,7 @@ body {
   box-shadow: 0 1px 0 0 rgba(229,57,53,.2), 0 4px 20px rgba(0,0,0,.5);
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 10;
-  background: rgba(13,6,8,.97);
+  background:rgba(13,6,8,.97);
 }
 .h-tag  { font-size:8px; color:var(--accent); letter-spacing:3px; font-family:monospace; text-shadow: 0 0 8px rgba(229,57,53,.6); }
 .h-name { font-size:20px; font-weight:800; color:#fff; }
@@ -226,12 +230,12 @@ body {
     <div class="sec-title">Profile</div>
     <div class="profiles" style="grid-template-columns:1fr 1fr 1fr 1fr;">
       <div class="pc balanced" id="pc-balanced" onclick="applyProfile('balanced')">
-        <div class="pc-icon">🤓</div>
+        <div class="pc-icon">⚙️</div>
         <div class="pc-name">Balanced</div>
         <div class="pc-sub">schedutil</div>
       </div>
       <div class="pc gaming" id="pc-gaming" onclick="applyProfile('gaming')">
-        <div class="pc-icon">🎮</div>
+        <div class="pc-icon">⚔️</div>
         <div class="pc-name">Gaming</div>
         <div class="pc-sub">perf</div>
       </div>
@@ -241,7 +245,7 @@ body {
         <div class="pc-sub">extreme</div>
       </div>
       <div class="pc battery" id="pc-battery" onclick="applyProfile('battery')">
-        <div class="pc-icon">🥱</div>
+        <div class="pc-icon">🔋</div>
         <div class="pc-name">Battery</div>
         <div class="pc-sub">powersave</div>
       </div>
@@ -339,7 +343,7 @@ body {
 
       <!-- Auto Gaming Detection -->
       <div class="tog-row">
-        <div class="tog-ico">🤖</div>
+        <div class="tog-ico">🪄</div>
         <div class="tog-info">
           <div class="tog-name">Auto Gaming Detection</div>
           <div class="tog-desc">Activate Gaming-Profile if CODM in Foreground</div>
