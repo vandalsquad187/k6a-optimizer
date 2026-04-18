@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.8
+# k6a-controller  v7.9
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -114,34 +114,42 @@ DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 # Zones that must NEVER be touched — SM7150 hardware safety
 THERMAL_SAFE_PATTERN="touch|tsp|ts[0-9]|conn_therm|charger_therm|battery|bms|qcom-bms|quiet_therm|xo_therm|pa_therm|pm6150|pm6150l"
 
-# Stop thermal daemons — SIGKILL + bind-mount (SIGSTOP ignoriert auf Lunaris 3.8 CAF)
+# Stop thermal daemons — SIGKILL + bind-mount
+# Bestätigt auf sweet_k6a Lunaris 3.8:
+#   - vendor.thermal-engine: stoppbar via init, aber mi_thermald + thermal-service.qti übernehmen
+#   - mi_thermald (PID ~1239): läuft nach "stop vendor.thermal-engine" weiter — braucht SIGKILL
+#   - android.hardware.thermal-service.qti (PID ~2049): Binder-HAL, schreibt ebenfalls scaling_max
+#   - /vendor ist dm-verity ext4 ro, aber bind-mount funktioniert (bestätigt: OK)
+#   - Double-mount: umount muss zweimal aufgerufen werden
 thermal_stop_daemons() {
     local pid svc
 
-    # Schritt 1: init-Services stoppen
-    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald; do
+    # Schritt 1: Alle bekannten thermal init-Services stoppen
+    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald                android.hardware.thermal-service.qti vendor.thermal; do
         stop "$svc" 2>/dev/null || true
+        setprop ctl.stop "$svc" 2>/dev/null || true
     done
     sleep 0.2
 
-    # Schritt 2: SIGKILL — thermal-engine ignoriert SIGSTOP auf Lunaris 3.8
-    # und schreibt scaling_max_freq beim Beenden zurück → CPUs frieren ein
-    for pid in $(pgrep -f "thermal-engine\|mi_thermald\|thermald" 2>/dev/null); do
+    # Schritt 2: SIGKILL ALLE thermal Prozesse
+    # mi_thermald überlebt "stop vendor.thermal-engine" — braucht expliziten Kill
+    # android.hardware.thermal-service.qti ist Binder-HAL — schreibt scaling_max
+    for pid in $(pgrep -f "thermal" 2>/dev/null); do
         kill -9 "$pid" 2>/dev/null || true
     done
+    sleep 0.1
 
-    # Schritt 3: Bind-Mount — verhindert Neustart durch init
-    # init startet thermal-engine neu wenn er crasht oder angefordert wird.
-    # Bind-Mount auf /bin/true: thermal-engine läuft durch ohne sysfs zu schreiben.
+    # Schritt 3: Bind-Mount auf /bin/true
+    # /vendor ist dm-verity ext4 (ro) aber bind-mount funktioniert mit root (bestätigt)
+    # Double-mount möglich — umount zweimal beim Restore
     local te_bin
-    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine; do
+    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine                   /vendor/bin/mi_thermald /system/bin/mi_thermald; do
         [ -f "$te_bin" ] || continue
-        mount | grep -q "$te_bin" && continue
+        # Bind-mount: thermal Binary → /bin/true (no-op)
         mount --bind /bin/true "$te_bin" 2>/dev/null &&             log "Bind-mount: $te_bin → /bin/true" || true
     done
 
-    # Schritt 4: irqbalance alle bekannten Service-Namen killen
-    # Auf Lunaris 3.8 kann der Name abweichen
+    # Schritt 4: irqbalance alle bekannten Service-Namen
     local ib_svc
     for ib_svc in irqbalance vendor.irqbalance irqbalance.default; do
         stop "$ib_svc" 2>/dev/null || true
@@ -151,23 +159,29 @@ thermal_stop_daemons() {
         kill -9 "$pid" 2>/dev/null || true
     done
 
+    # Schritt 5: thermalservice + Binder-HAL override
     cmd thermalservice override-status 0 2>/dev/null || true
-    log "Thermal daemons: killed (SIGKILL) + bind-mount + irqbalance killed"
+    # HAL Property: verhindert dass thermal-service.qti throttling-Entscheidungen trifft
+    setprop vendor.thermal.config "thermal-engine-off.conf" 2>/dev/null || true
+    log "Thermal daemons: killed (SIGKILL) + bind-mount (mi_thermald+thermal-engine+HAL)"
 }
 
-# Restore thermal daemons — bind-mount entfernen + Services starten
+# Restore thermal daemons
 thermal_restore_daemons() {
     local te_bin svc
-    # Bind-Mount entfernen — thermal-engine läuft wieder normal
-    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine; do
-        mount | grep -q "$te_bin" && umount "$te_bin" 2>/dev/null || true
+    # Bind-Mount entfernen — zweimal umount wegen Double-mount auf dm-verity
+    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine                   /vendor/bin/mi_thermald /system/bin/mi_thermald; do
+        # Zweimal umount: einmal für jeden Mount-Layer
+        umount "$te_bin" 2>/dev/null || true
+        umount "$te_bin" 2>/dev/null || true
     done
+    setprop vendor.thermal.config "" 2>/dev/null || true
     # irqbalance wieder starten
     for svc in irqbalance vendor.irqbalance irqbalance.default; do
         start "$svc" 2>/dev/null || true
     done
-    # thermal-engine wieder starten
-    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald; do
+    # thermal Services wieder starten
+    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald                android.hardware.thermal-service.qti vendor.thermal; do
         start "$svc" 2>/dev/null || true
     done
     cmd thermalservice reset 2>/dev/null || true
@@ -1154,7 +1168,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.8 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.9 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Prime=cpu6-7/policy6(max2304MHz)"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
