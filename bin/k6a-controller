@@ -132,12 +132,18 @@ thermal_stop_daemons() {
     sleep 0.2
 
     # Schritt 2: SIGKILL ALLE thermal Prozesse
-    # mi_thermald überlebt "stop vendor.thermal-engine" — braucht expliziten Kill
-    # android.hardware.thermal-service.qti ist Binder-HAL — schreibt scaling_max
+    # mi_thermald (PID ~1240): läuft nach stop weiter — schreibt scaling_max alle 40s
+    # android.hardware.thermal-service.qti (PID ~2033): Binder-HAL, gleiche Wirkung
+    # pgrep -f "thermal" erwischt alle auf einmal
     for pid in $(pgrep -f "thermal" 2>/dev/null); do
         kill -9 "$pid" 2>/dev/null || true
     done
-    sleep 0.1
+    # Explizit nochmal per exaktem Namen — falls pgrep -f nicht alle erwischt
+    for pid in $(pgrep -x "mi_thermald" 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    # 400ms warten: mi_thermald braucht länger zum Beenden als thermal-engine
+    sleep 0.4
 
     # Schritt 3: Bind-Mount auf /bin/true
     # /vendor ist dm-verity ext4 (ro) aber bind-mount funktioniert mit root (bestätigt)
@@ -763,10 +769,22 @@ enter_balanced() {
 
 enter_gaming() {
     log "→ GAMING"
-    # ── CPU: set min floors, let schedutil boost above them freely ────────────
-    # up_rate_limit_us=0:   no delay ramping UP   (instant on burst load)
-    # down_rate_limit_us=800: hold high for 800µs (one ~120fps frame window)
-    # hispeed_load=1: go to hispeed_freq at 1% load — effectively always boosted
+
+    # ── Thermal ZUERST — BEVOR cpu_set schreibt ──────────────────────────────
+    # KRITISCH: mi_thermald + android.hardware.thermal-service.qti schreiben
+    # scaling_max_freq alle ~40s zurück auf ihre Cap-Werte (1497600/1555200).
+    # Diese müssen tot sein BEVOR wir CPU-Frequenzen setzen.
+    # vendor.thermal-engine allein reicht nicht — mi_thermald übernimmt danach.
+    if [ "$(cfg thermal_disable)" = "1" ]; then
+        thermal_full_disable
+        # 500ms warten: alle thermal Prozesse müssen beendet sein
+        # mi_thermald braucht länger als vendor.thermal-engine
+        sleep 0.5
+    else
+        thermal_full_restore
+    fi
+
+    # ── CPU: jetzt sicher setzen (alle thermal Daemons sind tot) ─────────────
     cpu_set "schedutil" "1248000" "1804800" "1785600" "2304000"
     # up_rate=0:    instant ramp on any load spike (no delay)
     # down_rate Silver=8000µs: hold freq 8ms after burst (audio/net threads)
