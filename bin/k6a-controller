@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.9
+# k6a-controller  v7.10
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -155,9 +155,19 @@ thermal_stop_daemons() {
         mount --bind /bin/true "$te_bin" 2>/dev/null &&             log "Bind-mount: $te_bin → /bin/true" || true
     done
 
-    # Schritt 4: irqbalance alle bekannten Service-Namen
+    # Schritt 4: irqbalance + msm_irqbalance killen
+    # msm_irqbalance: Qualcomm-eigener Balancer (PID ~1155 auf sweet_k6a)
+    # Binary: /vendor/bin/msm_irqbalance — pidof irqbalance findet ihn NICHT
+    for pid in $(pgrep -x "msm_irqbalance" 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    if [ -f "/vendor/bin/msm_irqbalance" ]; then
+        mount | grep -q "msm_irqbalance" || \
+            mount --bind /bin/true /vendor/bin/msm_irqbalance 2>/dev/null && \
+            log "Bind-mount: /vendor/bin/msm_irqbalance → /bin/true" || true
+    fi
     local ib_svc
-    for ib_svc in irqbalance vendor.irqbalance irqbalance.default; do
+    for ib_svc in irqbalance vendor.irqbalance irqbalance.default msm_irqbalance; do
         stop "$ib_svc" 2>/dev/null || true
         setprop ctl.stop "$ib_svc" 2>/dev/null || true
     done
@@ -175,19 +185,21 @@ thermal_stop_daemons() {
 # Restore thermal daemons
 thermal_restore_daemons() {
     local te_bin svc
-    # Bind-Mount entfernen — zweimal umount wegen Double-mount auf dm-verity
-    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine                   /vendor/bin/mi_thermald /system/bin/mi_thermald; do
-        # Zweimal umount: einmal für jeden Mount-Layer
+    # Bind-Mounts entfernen — zweimal wegen Double-mount auf dm-verity
+    for te_bin in /vendor/bin/thermal-engine /system/bin/thermal-engine \
+                  /vendor/bin/mi_thermald /system/bin/mi_thermald \
+                  /vendor/bin/msm_irqbalance; do
         umount "$te_bin" 2>/dev/null || true
         umount "$te_bin" 2>/dev/null || true
     done
     setprop vendor.thermal.config "" 2>/dev/null || true
-    # irqbalance wieder starten
-    for svc in irqbalance vendor.irqbalance irqbalance.default; do
+    # msm_irqbalance + irqbalance wieder starten
+    for svc in msm_irqbalance irqbalance vendor.irqbalance irqbalance.default; do
         start "$svc" 2>/dev/null || true
     done
     # thermal Services wieder starten
-    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald                android.hardware.thermal-service.qti vendor.thermal; do
+    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald \
+               android.hardware.thermal-service.qti vendor.thermal; do
         start "$svc" 2>/dev/null || true
     done
     cmd thermalservice reset 2>/dev/null || true
@@ -383,12 +395,21 @@ gpu_balanced() {
 #   Net  (wlan/rmnet)→ Silver (0xfc): Paket-ISR von Gold fernhalten
 # ═══════════════════════════════════════════════════════════════════════════════
 apply_irq_affinity() {
-    # irqbalance permanent deaktivieren via persist props + alle bekannten Namen
-    # Ohne persist: init startet irqbalance neu (bestätigt PID 1185 nach kill)
-    setprop persist.vendor.irqbalance 0 2>/dev/null || true
-    setprop persist.device_config.irqbalance 0 2>/dev/null || true
+    # msm_irqbalance: Qualcomm-eigener IRQ-Balancer auf sweet_k6a
+    # Binary: /vendor/bin/msm_irqbalance (PID ~1155, bestätigt)
+    # Nicht "irqbalance" — deshalb haben alle stop/pidof irqbalance ihn nie erwischt!
+    local msm_ib_pid
+    for msm_ib_pid in $(pgrep -x "msm_irqbalance" 2>/dev/null); do
+        kill -9 "$msm_ib_pid" 2>/dev/null || true
+    done
+    # Bind-mount auf /bin/true — verhindert Neustart durch init
+    if [ -f "/vendor/bin/msm_irqbalance" ]; then
+        mount | grep -q "msm_irqbalance" || \
+            mount --bind /bin/true /vendor/bin/msm_irqbalance 2>/dev/null || true
+    fi
+    # Standard irqbalance auch killen (Fallback)
     local ib_svc ib_pid
-    for ib_svc in irqbalance vendor.irqbalance irqbalance.default; do
+    for ib_svc in irqbalance vendor.irqbalance irqbalance.default msm_irqbalance; do
         stop "$ib_svc" 2>/dev/null || true
         setprop ctl.stop "$ib_svc" 2>/dev/null || true
     done
@@ -1186,7 +1207,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.9 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.10 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Prime=cpu6-7/policy6(max2304MHz)"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
@@ -1327,12 +1348,13 @@ while true; do
         [ $(( TICK % 3 )) -eq 0 ] && apply_irq_affinity
 
         # ── GPU Floor Watchdog (alle 2 Ticks = ~6s) ──────────────────────────
-        # Diagnose: thermal-engine setzt min_freq auf 267MHz + thermal_pwrlevel=1 zurück
+        # Diagnose: force_clk_on=0 nach 22min — msm-adreno-tz setzt es zurück
+        # force_clk_on=0 → GPU schläft zwischen Frames ein → micro-stutter beim Aufwachen
         if [ $(( TICK % 2 )) -eq 0 ]; then
             _gpu_min=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
             _gpu_clk=$(cat $GPU/force_clk_on 2>/dev/null || echo 1)
             _gpu_tpwrl=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 0)
-            if [ "$_gpu_min" -lt "430000000" ] || [ "$_gpu_clk" = "0" ] || [ "$_gpu_tpwrl" -gt "0" ]; then
+            if [ "$_gpu_min" -lt "430000000" ] || [ "$_gpu_clk" != "1" ] || [ "$_gpu_tpwrl" -gt "0" ]; then
                 dbg "GPU correcting: min=${_gpu_min} clk=${_gpu_clk} thermal_pwrlevel=${_gpu_tpwrl}"
                 w $GPU/thermal_pwrlevel     "0"
                 w $GPU/devfreq/min_freq     "430000000"
