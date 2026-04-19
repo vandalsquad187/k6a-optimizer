@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.10
+# k6a-controller  v7.12
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -482,9 +482,9 @@ sched_gaming() {
     # Verhindert Core-Hopping des RenderThread zwischen cpu6 und cpu7
     # Default ~500000ns. Auf WALT-Kernels oft nicht vorhanden → w() ignoriert es
     w /proc/sys/kernel/sched_migration_cost_ns     "5000000"
-    # Micro-stutter: Gold down_rate hold 20ms (prevent bounce after frame burst)
-    # tune_schedutil already sets 800µs but override for gaming stability
-    [ -d "$SU_GOLD" ] && w "$SU_GOLD/down_rate_limit_us" "20000"
+    # Micro-stutter: down_rate wird bereits in schedutil_set auf 8ms/10ms gesetzt
+    # Kein Override hier — würde schedutil_set überschreiben
+    # [ -d "$SU_GOLD" ] && w "$SU_GOLD/down_rate_limit_us" "20000"  ← entfernt
     # CPU input boost (SM7150 CAF) — touch → brief Silver+Gold freq boost
     local IB=/sys/module/cpu_boost/parameters
     if [ -d "$IB" ]; then
@@ -505,6 +505,26 @@ sched_gaming() {
     # Kernel entropy: disable add_random for I/O (saves overhead during gaming)
     for q in /sys/block/*/queue/add_random; do w "$q" "0"; done
     apply_irq_affinity
+    # ── Battery Thermal Throttle deaktivieren ────────────────────────────────
+    # system_temp_level=4 cappt CPU-Entladestrom bei batt_temp >40°C (bestätigt!)
+    # Das ist der Hauptgrund für FPS-Drops nach 20min Gaming
+    # charge_control_limit_max=28 Stufen — wir setzen auf 0 (kein Limit)
+    w /sys/class/power_supply/battery/system_temp_level "0"
+
+    # ── Task Migration — upmigrate senken ────────────────────────────────────
+    # Default: upmigrate=95 — CoD RenderThread (~70-80% Last) kommt nie auf Prime!
+    # Gaming: upmigrate=80 → Tasks migrieren früher auf cpu6-7
+    # downmigrate=60 → Tasks bleiben länger auf Prime nach Burst
+    w /proc/sys/kernel/sched_upmigrate   "80"
+    w /proc/sys/kernel/sched_downmigrate "60"
+
+    # ── uclamp — VantomKernel hat uclamp backported auf 4.14 ─────────────────
+    # sched_util_clamp_min=128 (default) → Tasks laufen zu niedrig
+    # 300 = ~29% von 1024 → Mindest-Auslastung für alle Tasks höher
+    # Verhindert dass schedutil zu früh auf niedrige Frequenzen geht
+    w /proc/sys/kernel/sched_util_clamp_min "300"
+    w /proc/sys/kernel/sched_util_clamp_max "1024"
+
     log "Sched: WALT+schedtune+IRQ(Touch/GPU→Gold,UFS→3f,Net→fc)+msm_perf"
 }
 
@@ -755,10 +775,9 @@ enter_balanced() {
     # Silver cpu0-5: min=300 max=1804800
     # Prime  cpu6-7: min=300 max=2304000
     cpu_set "schedutil" "300000" "1804800" "300000" "2304000"
-    # schedutil: conservative — hispeed at 80% load, standard rates
+    # schedutil: System-Default Werte (hispeed_load=80/75 wie ohne Modul)
     schedutil_set "80" "1248000" "4000" "16000" \
                   "75" "1574400" "2000" "8000"
-    gpu_balanced
     io_balanced
     sched_balanced
     w /proc/sys/vm/swappiness              "15"
@@ -781,6 +800,12 @@ enter_balanced() {
     setprop persist.vendor.qti.games.gt.fps "0" 2>/dev/null || true
     w /proc/sys/kernel/sched_child_runs_first "0"
     w /proc/sys/vm/extra_free_kbytes "0"
+    # Restore battery throttle + migration defaults
+    w /sys/class/power_supply/battery/system_temp_level "0"  # bleibt 0 — nie drosseln
+    w /proc/sys/kernel/sched_upmigrate   "95"
+    w /proc/sys/kernel/sched_downmigrate "85"
+    w /proc/sys/kernel/sched_util_clamp_min "128"
+    w /proc/sys/kernel/sched_util_clamp_max "1024"
     start logd 2>/dev/null || true
     unfreeze_all
     printf '%s' "balanced" > "$PROFILE"
@@ -807,14 +832,16 @@ enter_gaming() {
 
     # ── CPU: jetzt sicher setzen (alle thermal Daemons sind tot) ─────────────
     cpu_set "schedutil" "1248000" "1804800" "1785600" "2304000"
-    # up_rate=0:    instant ramp on any load spike (no delay)
-    # down_rate Silver=8000µs: hold freq 8ms after burst (audio/net threads)
-    # down_rate Gold=10000µs: hold freq 10ms after frame burst (less bouncing)
-    # Silver down_rate=12ms: etwas länger halten als 8ms
-    # Verhindert Stutter bei Audio-Thread-Spikes (Schüsse, Explosionen)
-    # Gold down_rate=10ms via schedutil_set, dann 20ms override in sched_gaming
-    schedutil_set "1" "1804800" "0" "12000" \
-                  "1" "2304000" "0" "10000"
+    # System-Default ohne Modul: Silver hispeed_load=80/1248000, Prime hispeed_load=75/1574400
+    # Unser alter hispeed_load=1 war kontraproduktiv:
+    #   - CPUs dauerhaft auf Max → mehr Wärme → früher throtteln
+    #   - perfd (libqti-perfd-client.so) kann nicht mehr intelligent reagieren
+    #   - schedutil hat keinen Headroom mehr für echte Burst-Last
+    # Neuer Ansatz: hispeed_load=60 = Frequenz steigt bei 60% Last → reaktiv aber nicht stur
+    # hispeed_freq = Max → wenn hispeed_load erreicht, springt er direkt auf Max
+    # down_rate = 8ms/10ms → hält hohe Freq kurz nach Burst (verhindert Bounce)
+    schedutil_set "60" "1804800" "0" "8000" \
+                  "60" "2304000" "0" "10000"
     # ── GPU ──────────────────────────────────────────────────────────────────
     gpu_gaming
     # ── I/O ──────────────────────────────────────────────────────────────────
@@ -851,7 +878,7 @@ enter_gaming() {
     cmd game set --downscale 1.0 com.activision.callofduty.shooter 2>/dev/null || true
     # Qualcomm Game Tools FPS-Hint
     setprop persist.vendor.qti.games.gt.fps "120" 2>/dev/null || true
-    stop logd 2>/dev/null || true
+    # logd läuft weiter — stop logd kann perfd-interne Hooks unterbrechen
     # ── CoD kernel tweaks ─────────────────────────────────────────────────────
     # Child-Thread läuft sofort nach fork() — CoD spawnt viele Threads
     w /proc/sys/kernel/sched_child_runs_first "1"
@@ -968,7 +995,7 @@ enter_competitive() {
     # Fixed Performance Mode: PowerHal hält alle Kerne auf max via PowerManager API
     # Android 12+ / Lunaris 3.8 AOSP — cmd power verfügbar
     cmd power set-fixed-performance-mode-enabled true 2>/dev/null || true
-    stop logd 2>/dev/null || true
+    # logd läuft weiter (perfd-kompatibel)
     w /proc/sys/kernel/sched_child_runs_first "1"
     w /proc/sys/vm/extra_free_kbytes "24576"
     tune_codm
@@ -1207,7 +1234,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.10 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.12 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Prime=cpu6-7/policy6(max2304MHz)"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
@@ -1347,6 +1374,15 @@ while true; do
         # IRQ-Affinität alle 3 Ticks — irqbalance überschreibt in <10s
         [ $(( TICK % 3 )) -eq 0 ] && apply_irq_affinity
 
+        # ── Battery Throttle Watchdog (jeden Tick) ───────────────────────────
+        # system_temp_level wird von Android automatisch erhöht bei batt_temp >40°C
+        # Wir setzen ihn nach jedem Tick zurück auf 0
+        _stl=$(cat /sys/class/power_supply/battery/system_temp_level 2>/dev/null || echo 0)
+        if [ "${_stl:-0}" -gt "0" ]; then
+            w /sys/class/power_supply/battery/system_temp_level "0"
+            dbg "system_temp_level war ${_stl} — auf 0 zurückgesetzt"
+        fi
+
         # ── GPU Floor Watchdog (alle 2 Ticks = ~6s) ──────────────────────────
         # Diagnose: force_clk_on=0 nach 22min — msm-adreno-tz setzt es zurück
         # force_clk_on=0 → GPU schläft zwischen Frames ein → micro-stutter beim Aufwachen
@@ -1393,7 +1429,8 @@ while true; do
                     cpu_set "performance" "1593600" "1804800" "2188800" "2304000"
                 else
                     cpu_set "schedutil" "1248000" "1804800" "1785600" "2304000"
-                    schedutil_set "1" "1804800" "0" "12000"                                   "1" "2304000" "0" "10000"
+                    schedutil_set "60" "1804800" "0" "8000" \
+                                  "60" "2304000" "0" "10000"
                 fi
                 w $GPU/thermal_pwrlevel  "0"
                 w $GPU/devfreq/min_freq  "430000000"
@@ -1401,6 +1438,8 @@ while true; do
                 w $GPU/min_pwrlevel      "3"
                 w $GPU/force_clk_on      "1"
                 w $GPU/throttling        "0"
+                # Battery throttle auch zurücksetzen
+                w /sys/class/power_supply/battery/system_temp_level "0"
                 apply_irq_affinity
                 log "CPU+GPU+IRQ recovered from freeze"
             fi
