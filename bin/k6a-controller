@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.13
+# k6a-controller  v7.14
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -642,7 +642,13 @@ spoof_battery() {
     [ "$(cfg battery_spoof_enable)" = "1" ] || return 0
     local c raw
     c=$(cfg battery_spoof_temp); c=${c:-1}
-    raw=$(( c * 1000 ))  # Milligrad: 10°C=10000, nicht 10
+    # PM6150 battery/temp Node: Zehntelgrad (1/10°C)
+    # 10°C = raw 100 — NICHT 10000!
+    # c*1000 löst PMIC Emergency-Reboot aus (Kernel liest 1000°C → Notabschaltung)
+    # Bestätigt auf sweet_k6a PM6150
+    raw=$(( c * 10 ))
+    # Sicherheitscheck: max 60°C (raw 600) — darüber PMIC-Shutdown
+    [ "$raw" -gt 600 ] && { log "Battery spoof ABORTED: ${c}°C zu hoch (max 60°C)"; return 1; }
     for node in /sys/class/power_supply/battery/temp \
                 /sys/class/power_supply/bms/temp; do
         [ -f "$node" ] && printf '%s\n' "$raw" > "$node" 2>/dev/null
@@ -1242,7 +1248,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.13 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.14 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Prime=cpu6-7/policy6(max2304MHz)"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
