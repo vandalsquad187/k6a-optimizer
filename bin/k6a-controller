@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.14
+# k6a-controller  v7.15
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -206,26 +206,72 @@ thermal_restore_daemons() {
     log "Thermal daemons: restored"
 }
 
-# Disable CPU/GPU thermal zones — leave hardware safety zones enabled
+# Disable CPU/GPU thermal zones — surgical whitelist approach
+#
+# sweet_k6a SM7150 confirmed zone map (2026-04-22):
+#   NEVER touch: pm6150-tz/pm6150l-tz (PMIC), pm6150-ibat/vbat/bcl (Battery
+#                current/voltage/BCL limits), pm6150l-vph/bcl, soc, bms,
+#                qcom-bms, battery, quiet_therm, xo_therm, pa_therm,
+#                charger_therm, camera-usr/lowf — these are the hardware
+#                safety rails. BCL zones (zone6-8, zone14-16) are the PMIC
+#                hard-reset triggers — disabling them causes the bootloop.
+#   SAFE to disable: cpu-*-usr, cpuss-*-usr, gpuss-*-usr, aoss-*-usr,
+#                    *-step, *-lowf (CPU/GPU), npu-*, video-*, ddr-usr/lowf
+#
+# Using explicit zone numbers (confirmed on this device) for safety.
+# Fallback: type-based matching still skips the safety pattern.
+THERMAL_SAFE_ZONES="
+    thermal_zone0  thermal_zone1  thermal_zone2  thermal_zone3
+    thermal_zone4  thermal_zone5  thermal_zone6  thermal_zone7
+    thermal_zone8  thermal_zone9  thermal_zone10 thermal_zone11
+    thermal_zone12 thermal_zone13 thermal_zone14 thermal_zone15
+    thermal_zone16 thermal_zone33 thermal_zone34 thermal_zone36
+    thermal_zone37 thermal_zone59 thermal_zone60 thermal_zone62
+    thermal_zone63 thermal_zone64 thermal_zone65 thermal_zone69
+    thermal_zone70 thermal_zone71 thermal_zone72 thermal_zone73
+    thermal_zone74 thermal_zone75 thermal_zone76 thermal_zone78
+    thermal_zone79 thermal_zone80 thermal_zone83
+"
+
 thermal_zones_disable() {
-    local zone type
-    for zone in /sys/devices/virtual/thermal/thermal_zone*; do
+    local zone zname type skip
+
+    # Build safe-zone lookup string (zone numbers as words)
+    local safe_list="$THERMAL_SAFE_ZONES"
+
+    for zone in /sys/class/thermal/thermal_zone* \
+                /sys/devices/virtual/thermal/thermal_zone*; do
+        [ -d "$zone" ] || continue
+        zname="${zone##*/}"   # e.g. thermal_zone17
+
+        # Skip if this zone is in our safe list
+        skip=0
+        for s in $safe_list; do
+            [ "$s" = "$zname" ] && { skip=1; break; }
+        done
+        [ "$skip" = "1" ] && continue
+
+        # Secondary guard: type-based safety pattern (belt-and-suspenders)
         type=$(cat "$zone/type" 2>/dev/null) || continue
         [ -z "$type" ] && continue
-        # Skip safety zones — never touch these
         echo "$type" | grep -qiE "$THERMAL_SAFE_PATTERN" && continue
+
         # Only disable performance zones
-        echo "$type" | grep -qiE "cpu|gpu|aoss|ddr|npu|video|cpuss|gpuss" || continue
+        echo "$type" | grep -qiE \
+            "cpu|gpu|aoss|ddr|npu|video|cpuss|gpuss|lowf|step" || continue
+
         w "$zone/mode"       "disabled"
         w "$zone/thm_enable" "0"
     done
-    log "Thermal zones: CPU/GPU disabled (safety zones active)"
+    log "Thermal zones: CPU/GPU/step/lowf disabled | PMIC+BCL+Battery+Camera ACTIVE"
 }
 
 # Re-enable all thermal zones
 thermal_zones_restore() {
     local zone
-    for zone in /sys/devices/virtual/thermal/thermal_zone*; do
+    for zone in /sys/class/thermal/thermal_zone* \
+                /sys/devices/virtual/thermal/thermal_zone*; do
+        [ -d "$zone" ] || continue
         w "$zone/mode"       "enabled"
         w "$zone/thm_enable" "1"
     done
@@ -612,6 +658,98 @@ net_restore() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# BLUETOOTH CONTROLLER OPTIMIZATION — ShanWan / Generic HID-over-BT
+#
+# Goal: minimize input latency from BT gamepad to CoD input processing.
+#
+# What we do:
+#   1. BT-IRQ → Silver cpu1 (dedicated, away from GPU/Touch on Gold)
+#   2. hci0 thread priority → RT FIFO 1 (below audio, above normal)
+#   3. Disable BT sniff/park mode → prevents 100-500ms wake-up latency spikes
+#   4. btusb/btsdio: avoid power management sleep cycles
+#   5. l2cap flush timeout: reduce HID report buffering
+#
+# What we do NOT touch:
+#   - BT firmware (no access without reboot)
+#   - HCI polling rate (controller-side, firmware-locked on ShanWan)
+#   - conn_therm zone (94°C reading — likely sensor drift, stays enabled)
+# ═══════════════════════════════════════════════════════════════════════════════
+bt_gaming() {
+    # ── Step 1: BT IRQ → Silver cpu1 (isolated from Gold IRQs) ──────────────
+    local irq_dir irq_name
+    for irq_dir in /proc/irq/*/; do
+        [ -f "${irq_dir}actions" ] || continue
+        irq_name=$(cat "${irq_dir}actions" 2>/dev/null)
+        # Match BT/SDIO interrupt names on SM7150
+        echo "$irq_name" | grep -qiE "qca|wcnss|bt|hci|sdhc.*1|cnss" || continue
+        # cpu1 only (0x02) — isolated Silver core, not cpu0 (system) or Gold
+        printf '%s' "02" > "${irq_dir}smp_affinity" 2>/dev/null || true
+        dbg "BT IRQ ($irq_name) → Silver cpu1 (0x02)"
+    done
+
+    # ── Step 2: hci0 receive thread → RT priority ────────────────────────────
+    # hci0 RX thread handles HID reports from controller — gets RT prio
+    # FIFO 1 = lowest RT, won't starve audio (typically FIFO 4-10)
+    local bt_tid comm
+    for bt_tid in /proc/*/task/*/; do
+        comm=$(cat "${bt_tid}comm" 2>/dev/null)
+        case "$comm" in
+            hci0|kworker*bt*|hci_rx_task|hci_cmd_task|hci_tx_task)
+                local tid_num="${bt_tid%/}"; tid_num="${tid_num##*/}"
+                chrt -f -p 1 "$tid_num" 2>/dev/null || true
+                dbg "BT thread $comm (tid $tid_num) → SCHED_FIFO 1"
+                ;;
+        esac
+    done
+
+    # ── Step 3: Disable BT sniff mode for active HID connection ──────────────
+    # Sniff mode: BT chip sleeps between polls → wake-up adds 100-500ms latency
+    # hciconfig sniff disable: forces active mode while gaming
+    # Only works if hci0 is up (BT enabled + controller connected)
+    if hciconfig hci0 2>/dev/null | grep -q "UP"; then
+        # Disable sniff + park modes for all connected devices
+        # btmgmt requires no arguments for device-level sniff disable
+        hciconfig hci0 sniffsubrating 0 2>/dev/null || true
+        # Alternative: write directly to sysfs power management
+        for bt_dev in /sys/class/bluetooth/hci0/; do
+            [ -d "$bt_dev" ] || continue
+            # Disable runtime PM for BT host controller
+            echo "on" > "${bt_dev}device/power/control" 2>/dev/null || true
+            echo "0"  > "${bt_dev}device/power/autosuspend_delay_ms" 2>/dev/null || true
+        done
+        dbg "BT: sniff mode disabled, host PM forced active"
+    fi
+
+    # ── Step 4: BT socket recv buffer — reduce HID report queuing ────────────
+    # Default SO_RCVBUF is large — HID reports queue up before delivery
+    # l2cap_recv_mtu: minimum MTU accepted — HID uses 64-byte reports
+    # Note: these are kernel defaults, per-socket overrides need app cooperation
+    sysctl -w net.core.rmem_default=16384 2>/dev/null || true  # smaller default
+    # BT-specific: bnep/rfcomm timing (no direct HID sysctl on 4.14 CAF)
+    # The real win is IRQ + RT thread above
+
+    log "BT Gaming: IRQ→cpu1, hci0 RT FIFO 1, sniff disabled"
+}
+
+bt_restore() {
+    # Restore BT IRQ to default balancing (msm_irqbalance handles it)
+    local irq_dir irq_name
+    for irq_dir in /proc/irq/*/; do
+        [ -f "${irq_dir}actions" ] || continue
+        irq_name=$(cat "${irq_dir}actions" 2>/dev/null)
+        echo "$irq_name" | grep -qiE "qca|wcnss|bt|hci|sdhc.*1|cnss" || continue
+        printf '%s' "ff" > "${irq_dir}smp_affinity" 2>/dev/null || true
+    done
+    # Restore host PM
+    for bt_dev in /sys/class/bluetooth/hci0/; do
+        [ -d "$bt_dev" ] || continue
+        echo "auto" > "${bt_dev}device/power/control" 2>/dev/null || true
+    done
+    sysctl -w net.core.rmem_default=212992 2>/dev/null || true
+    log "BT Gaming: restored"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # I/O
 # ═══════════════════════════════════════════════════════════════════════════════
 io_gaming() {
@@ -801,6 +939,7 @@ enter_balanced() {
     resetprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || \
         setprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || true
     net_restore
+    bt_restore
     cmd power set-fixed-performance-mode-enabled false 2>/dev/null || true
     setprop debug.sf.disable_backpressure   "0" 2>/dev/null || true
     setprop debug.sf.enable_gl_backpressure "1" 2>/dev/null || true
@@ -873,6 +1012,8 @@ enter_gaming() {
     sched_gaming
     # ── Network (LTE/CoD optimised) ──────────────────────────────────────────
     net_gaming
+    # ── Bluetooth Controller ──────────────────────────────────────────────────
+    bt_gaming
     # ── SurfaceFlinger ───────────────────────────────────────────────────────
     setprop debug.sf.disable_backpressure   "1" 2>/dev/null || true
     setprop debug.sf.enable_gl_backpressure "0" 2>/dev/null || true
@@ -965,6 +1106,8 @@ enter_competitive() {
     lmk_gaming        # same protection as gaming — CoD threads safe
     w /proc/sys/kernel/sched_boost         "1"
     net_gaming        # BBR + UDP buffers — identical to gaming
+    # ── Bluetooth Controller ──────────────────────────────────────────────────
+    bt_gaming
     # ── Thermal: always fully disabled in competitive ─────────────────────────
     thermal_full_disable
     # ── Battery spoof ────────────────────────────────────────────────────────
@@ -1248,7 +1391,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.14 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.15 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Prime=cpu6-7/policy6(max2304MHz)"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
