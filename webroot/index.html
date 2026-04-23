@@ -42,7 +42,7 @@ background-image: radial-gradient(
   box-shadow: 0 1px 0 0 rgba(229,57,53,.2), 0 4px 20px rgba(0,0,0,.5);
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 10;
-  background:rgba(13,6,8,.97);
+  background: var(--card);
 }
 .h-tag  { font-size:8px; color:var(--accent); letter-spacing:3px; font-family:monospace; text-shadow: 0 0 8px rgba(229,57,53,.6); }
 .h-name { font-size:20px; font-weight:800; color:#fff; }
@@ -91,7 +91,7 @@ background-image: radial-gradient(
 .pc.active.competitive  { border-color:#ff1744; background:rgba(255,23,68,.14); box-shadow:0 0 18px rgba(255,23,68,.35); }
 
 .tog-list { display:flex; flex-direction:column; gap:2px; }
-.tog-row { background:var(--card); border:1px solid var(--border); border-left:2px solid rgba(229,57,53,.25); border-radius:8px; padding:13px 14px; display:flex; align-items:center; gap:12px; }
+.tog-row { background:var(--card); border:1px solid var(--border); border-left:2px solid rgba(229,57,53,.25); border-radius:10px; padding:13px 14px; display:flex; align-items:center; gap:12px; }
 .tog-ico  { font-size:18px; flex-shrink:0; width:24px; text-align:center; }
 .tog-info { flex:1; }
 .tog-name { font-size:13px; font-weight:600; }
@@ -120,7 +120,7 @@ background-image: radial-gradient(
 .pa-add  { width:100%; padding:11px; margin-top:6px; background:transparent; border:1px dashed rgba(229,57,53,.25); border-radius:8px; color:var(--muted); font-family:monospace; font-size:11px; cursor:pointer; }
 
 /* ── Freeze Engine UI ─────────────────────────────────────────────────────── */
-.fr-rule  { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:6px; }
+.fr-rule  { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:6px; }
 .fr-trigger { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
 .fr-trigger-name { font-size:13px; font-weight:700; color:var(--accent); flex:1; }
 .fr-trigger-pkg  { font-family:monospace; font-size:9px; color:var(--muted); }
@@ -143,7 +143,7 @@ background-image: radial-gradient(
 
 /* ── Settings Box ──────────────────────────────────────────────────────── */
 .settings-box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-family:monospace; font-size:10px; line-height:1.7; max-height:220px; overflow-y:auto; }
-.ascii-box { background:var(--card); border:1px solid var(--border); border-top:1px solid rgba(229,57,53,.25); border-radius:8px; padding:10px 12px; font-family:monospace; font-size:9px; line-height:1.5; color:var(--accent); white-space:pre; overflow:hidden; text-align:center; opacity:.7; }
+.ascii-box { background:var(--card); border:1px solid var(--border); border-top:2px solid rgba(229,57,53,.5); border-radius:8px; padding:14px 16px; font-family:monospace; font-size:9px; line-height:1.5; color:var(--accent); white-space:pre; overflow:hidden; text-align:center; }
 .s-row  { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid rgba(255,255,255,.03); }
 .s-row:last-child { border-bottom:none; }
 .s-key  { color:var(--muted); font-size:9px; letter-spacing:.5px; }
@@ -256,19 +256,27 @@ background-image: radial-gradient(
   <div class="section">
     <div class="sec-title">System</div>
     <div style="display:flex;gap:8px;align-items:flex-start;">
-      <div class="info-chip" style="flex:1;margin-top:0;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-family:monospace;font-size:9px;color:var(--muted);letter-spacing:2px;margin-bottom:4px;">INFO</div>
+        <div class="info-chip" style="margin-top:0;">
+        <!-- Android — volle Zeile -->
         <div class="chip-row">
-          <div class="chip-item">
-            <span class="chip-lbl">KERNEL</span>
-            <span class="chip-val cyan" id="inf-kernel">—</span>
-            <span style="font-family:monospace;font-size:9px;color:var(--muted);" id="inf-kernel-real"></span>
-          </div>
-          <div class="chip-item">
+          <div class="chip-item" style="flex:1;min-width:0;">
             <span class="chip-lbl">ANDROID</span>
             <span class="chip-val yellow" id="inf-android">—</span>
           </div>
         </div>
         <div class="chip-divider"></div>
+        <!-- Kernel — volle Zeile -->
+        <div class="chip-row">
+          <div class="chip-item" style="flex:1;min-width:0;">
+            <span class="chip-lbl">KERNEL</span>
+            <span class="chip-val cyan" id="inf-kernel">—</span>
+            <span style="font-family:monospace;font-size:9px;color:var(--muted);display:block;margin-top:1px;word-break:break-all;" id="inf-kernel-real"></span>
+          </div>
+        </div>
+        <div class="chip-divider"></div>
+        <!-- Akku + Uptime -->
         <div class="chip-row">
           <div class="chip-item">
             <span class="chip-lbl">AKKU</span>
@@ -280,6 +288,7 @@ background-image: radial-gradient(
           </div>
         </div>
         <div class="chip-divider"></div>
+        <!-- Akku Temp + Ping -->
         <div class="chip-row">
           <div class="chip-item">
             <span class="chip-lbl">AKKU TEMP</span>
@@ -290,7 +299,7 @@ background-image: radial-gradient(
             <span class="chip-val cyan" id="inf-ping">—</span>
           </div>
         </div>
-        
+        </div>
       </div>
       <!-- Rechte Spalte: Tweaks oben + Settings unten + ASCII -->
       <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;">
@@ -305,6 +314,12 @@ background-image: radial-gradient(
       </div>
     </div>
   </div>
+  <!-- ASCII LOGO — eigene Karte zwischen System und Storage -->
+  <div class="section" id="ascii-section" style="display:none;">
+    <div class="sec-title">ASCII</div>
+    <div id="ascii-box" class="ascii-box"></div>
+  </div>
+
   <!-- 6. SPEICHER — kompakt: Label+Value+Bar+Button inline -->
   <div class="section">
     <div class="sec-title">Storage</div>
@@ -350,7 +365,7 @@ background-image: radial-gradient(
         </div>
         <label class="sw g">
           <input type="checkbox" id="tog-auto"
-            onchange="saveConf('auto_detection',this.checked?'1':'0');
+            onchange="lockTog('conf_auto');saveConf('auto_detection',this.checked?'1':'0');
                       toast(this.checked?'✓ Auto Detection ON':'✗ Auto Detection OFF')">
           <span class="sw-t"></span>
         </label>
@@ -362,11 +377,11 @@ background-image: radial-gradient(
         <div class="tog-info">
           <div class="tog-name">Thermal Disabler</div>
           <div class="tog-desc">Deactiviate CPU/GPU-Zones in Gaming — Sicherheitszonen keep active</div>
-          <div class="warn on">⚠ IMPORTANT for Ranked Mode</div>
+          <div class="warn" id="warn-thermal">⚠ IMPORTANT for Ranked Mode</div>
         </div>
         <label class="sw r">
           <input type="checkbox" id="tog-thermal"
-            onchange="saveConf('thermal_disable',this.checked?'1':'0');
+            onchange="lockTog('conf_thermal');saveConf('thermal_disable',this.checked?'1':'0');
                       toast(this.checked?'🌡 Thermal Disabler ON':'🌡 Thermal Disabler OFF')">
           <span class="sw-t"></span>
         </label>
@@ -438,6 +453,9 @@ function saveConf(key, val) {
     run('grep -q "^' + key + '=" "' + CONF + '" 2>/dev/null' +
         ' && sed -i "s|^' + key + '=.*|' + key + '=' + val + '|" "' + CONF + '"' +
         ' || echo "' + key + '=' + val + '" >> "' + CONF + '"');
+    // Controller braucht ~1.5s für thermal ops nach mtime-Reload
+    // Kein sofortiger UI-Reload — polling timer übernimmt nach 5s
+    // Das verhindert das false-positive "gestoppt" im Header
 }
 
 
@@ -448,21 +466,15 @@ function loadAsciiLogo() {
         .then(function(r) { return r.ok ? r.text() : ''; })
         .then(function(txt) {
             var box = document.getElementById('ascii-box');
+            var sec = document.getElementById('ascii-section');
             if (!box) return;
             var content = (txt || '').trim();
             if (content) {
                 box.textContent = content;
-                box.style.display = 'block';
-            } else {
-                // Default wenn keine ascii.conf vorhanden
-                box.textContent = 'k6a_perf';
-                box.style.display = 'block';
+                if (sec) sec.style.display = 'block';
             }
         })
-        .catch(function() {
-            var box = document.getElementById('ascii-box');
-            if (box) box.style.display = 'none';
-        });
+        .catch(function() {});
 }
 
 // ── Lesen via fetch('data.txt') ───────────────────────────────────────────────
@@ -486,8 +498,25 @@ function loadData(cb) {
         .catch(function() { cb({}); });
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-var _tt;
+// ── Toggle-Lock: verhindert Bounce durch applyData-Überschreiben ─────────────
+// Nach jeder User-Interaktion mit einem Toggle wird für 8s kein Poll-Override
+// erlaubt. Das gibt dem Controller Zeit zu reagieren (thermal ops ~3s).
+var _togLock = {};       // { 'conf_thermal': timestamp, ... }
+var TOG_LOCK_MS = 8000;  // 8 Sekunden Lock nach User-Interaktion
+
+function lockTog(key) {
+    _togLock[key] = Date.now();
+}
+function isTogLocked(key) {
+    return _togLock[key] && (Date.now() - _togLock[key]) < TOG_LOCK_MS;
+}
+
+// ── PID-Stabilisierung: ignoriere einzelne leere pid-Reads ───────────────────
+// Controller schreibt data.txt nicht während thermal ops (~3s window)
+// Wir zeigen gestoppt erst nach 2 aufeinanderfolgenden leeren pid-Reads
+var _pidMissCount = 0;
+var PID_MISS_THRESHOLD = 2;
+
 function toast(msg) {
     var el = document.getElementById('toast');
     el.textContent = msg;
@@ -515,8 +544,14 @@ function setProfileUI(p) {
     // Indikator-Balken sofort aktualisieren
     var barEl = document.getElementById('profile-bar');
     if (barEl) {
-        var c = p === 'gaming' ? 'var(--accent)' : p === 'battery' ? 'var(--green)' : '#ff9800';
-        var g = p === 'gaming' ? 'rgba(229,57,53,.5)' : p === 'battery' ? 'rgba(0,230,118,.4)' : 'rgba(255,152,0,.4)';
+        var c = p === 'gaming'      ? 'var(--accent)'
+              : p === 'competitive' ? '#ff1744'
+              : p === 'battery'     ? 'var(--green)'
+              : '#ff9800';
+        var g = p === 'gaming'      ? 'rgba(229,57,53,.5)'
+              : p === 'competitive' ? 'rgba(255,23,68,.6)'
+              : p === 'battery'     ? 'rgba(0,230,118,.4)'
+              : 'rgba(255,152,0,.4)';
         barEl.style.background = c;
         barEl.style.boxShadow  = '0 0 8px ' + g;
     }
@@ -632,20 +667,27 @@ function applyData(d) {
     // Service PID — Farbe folgt aktivem Profil
     var pe = document.getElementById('inf-pid');
     var activeProf = (d.manual_profile || d.profile || 'balanced').trim();
-    var profColor = activeProf === 'gaming' ? 'var(--accent)'
-                 : activeProf === 'battery' ? 'var(--green)'
-                 : '#ff9800'; // balanced = orange
-    var profGlow  = activeProf === 'gaming' ? 'rgba(229,57,53,.5)'
-                 : activeProf === 'battery' ? 'rgba(0,230,118,.4)'
+    var profColor = activeProf === 'gaming'       ? 'var(--accent)'
+                 : activeProf === 'competitive'  ? '#ff1744'
+                 : activeProf === 'battery'      ? 'var(--green)'
+                 : '#ff9800';
+    var profGlow  = activeProf === 'gaming'       ? 'rgba(229,57,53,.5)'
+                 : activeProf === 'competitive'  ? 'rgba(255,23,68,.6)'
+                 : activeProf === 'battery'      ? 'rgba(0,230,118,.4)'
                  : 'rgba(255,152,0,.4)';
     if (d.pid && d.pid.trim() && d.pid.trim() !== '0') {
+        _pidMissCount = 0;
         pe.textContent = 'PID ' + d.pid.trim();
         pe.style.color = profColor;
     } else {
-        pe.textContent = 'gestoppt';
-        pe.style.color = 'var(--red)';
+        _pidMissCount++;
+        if (_pidMissCount >= PID_MISS_THRESHOLD) {
+            pe.textContent = 'gestoppt';
+            pe.style.color = 'var(--red)';
+        }
+        // Einzelner leerer Read: alten Wert behalten (Controller reload window)
     }
-    // Indikator-Balken: Farbe + Glow je nach Profil
+    // Indikator-Balken: Farbe + Glow je nach Profil (inkl. competitive=#ff1744)
     var bar = document.getElementById('profile-bar');
     if (bar) {
         bar.style.background  = profColor;
@@ -783,8 +825,9 @@ function applyData(d) {
     renderSettings(d);
     })();
 
-    // Toggles (beim ersten Laden)
+    // Toggles — nur setzen wenn kein User-Interaktions-Lock aktiv
     var chk = function(id, key) {
+        if (isTogLocked(key)) return;   // Lock aktiv → nicht überschreiben
         var el = document.getElementById(id);
         if (el && d[key] !== undefined) el.checked = d[key].trim() === '1';
     };
@@ -794,13 +837,17 @@ function applyData(d) {
     chk('tog-autocache', 'conf_autocache');
     if (d.conf_thermal && d.conf_thermal.trim() === '1')
         document.getElementById('warn-thermal').classList.add('on');
+    else
+        document.getElementById('warn-thermal').classList.remove('on');
 
-    // Battery spoofing
-    var spoofOn = d.conf_spoof_enable && d.conf_spoof_enable.trim() === '1';
-    var spoofEl = document.getElementById('tog-spoof');
-    if (spoofEl) spoofEl.checked = spoofOn;
-    document.getElementById('spoof-slider-wrap').style.display = spoofOn ? 'block' : 'none';
-    if (d.conf_spoof_temp) {
+    // Battery spoofing — lock-aware
+    if (!isTogLocked('conf_spoof_enable')) {
+        var spoofOn = d.conf_spoof_enable && d.conf_spoof_enable.trim() === '1';
+        var spoofEl = document.getElementById('tog-spoof');
+        if (spoofEl) spoofEl.checked = spoofOn;
+        document.getElementById('spoof-slider-wrap').style.display = spoofOn ? 'block' : 'none';
+    }
+    if (!isTogLocked('conf_spoof_temp') && d.conf_spoof_temp) {
         var sv = parseInt(d.conf_spoof_temp.trim(), 10);
         if (sv >= 1 && sv <= 20) {
             document.getElementById('spoof-slider').value = sv;
@@ -846,6 +893,7 @@ function applyData(d) {
 // ── Cache Cleaner ─────────────────────────────────────────────────────────────
 // ── Battery Spoofing ──────────────────────────────────────────────────────────
 function toggleSpoof(on) {
+    lockTog('conf_spoof_enable');
     saveConf('battery_spoof_enable', on ? '1' : '0');
     document.getElementById('spoof-slider-wrap').style.display = on ? 'block' : 'none';
     toast(on ? '🧊 Battery Spoofing an' : '✓ Battery Spoofing aus');
