@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.15
+# k6a-controller  v7.18
 # SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
 #
 # DESIGN PRINCIPLES (learned from Encore + LickT):
@@ -434,16 +434,22 @@ gpu_balanced() {
 # Problem auf sweet_k6a: Kernel setzt IRQ-Affinität nach suspend/resume zurück.
 # Lösung: apply_irq_affinity() wird bei State-Eintritt UND periodisch aufgerufen.
 #
-# Routing-Strategie:
-#   Touch (goodix_ts) → Gold (0xc0): Touch-ISR direkt nah am InputDispatcher
-#   GPU  (kgsl-3d0)  → Gold (0xc0): GPU-Completion-ISR nah am RenderThread
-#   UFS  (ufshc)     → Silver (0x3f): Storage-Interrupts stören Gold nicht
-#   Net  (wlan/rmnet)→ Silver (0xfc): Paket-ISR von Gold fernhalten
+# CONFIRMED auf sweet_k6a Openela 4.14 (getestet 2026-04-22):
+#   - Kernel akzeptiert NUR eine CPU pro IRQ (NO_BALANCE flag auf diesen IRQs)
+#   - c0 (cpu6+cpu7) wird zu 40 (cpu6 only) gecastet — Kernel-Verhalten, kein Bug
+#   - smp_affinity_list schlägt still fehl auf diesem Kernel
+#   - Korrekte Werte: 40=cpu6, 10=cpu4, 04=cpu2, 02=cpu1
+#
+# Routing-Strategie (confirmed single-CPU):
+#   Touch (goodix_ts) → cpu6 (0x40): Gold-Core, nah am InputDispatcher
+#   GPU  (kgsl-3d0)  → cpu6 (0x40): Gold-Core, nah am RenderThread
+#   UFS  (ufshc)     → cpu1 (0x02): Silver, isolated (nicht cpu0=system)
+#   Net  (wlan/rmnet)→ cpu2 (0x04): Silver, getrennt von UFS
+#   BT   (qca/wcnss) → cpu1 (0x02): Silver, bereits in bt_gaming() gesetzt
 # ═══════════════════════════════════════════════════════════════════════════════
 apply_irq_affinity() {
     # msm_irqbalance: Qualcomm-eigener IRQ-Balancer auf sweet_k6a
     # Binary: /vendor/bin/msm_irqbalance (PID ~1155, bestätigt)
-    # Nicht "irqbalance" — deshalb haben alle stop/pidof irqbalance ihn nie erwischt!
     local msm_ib_pid
     for msm_ib_pid in $(pgrep -x "msm_irqbalance" 2>/dev/null); do
         kill -9 "$msm_ib_pid" 2>/dev/null || true
@@ -471,30 +477,29 @@ apply_irq_affinity() {
         [ -z "$irq_name" ] && continue
         irq_num="${irq_dir%/}"; irq_num="${irq_num##*/}"
 
-        # Touch → Gold (cpu6-7): minimale Input-Latenz
+        # Touch → cpu6 (0x40): minimale Input-Latenz, Gold-Core
+        # CONFIRMED: Kernel casts c0→40 (single-CPU only), 40 hält stabil
         if echo "$irq_name" | grep -qiE "goodix|synaptics|fts_touch|gt9|focal|atmel|touch_irq|touchscreen"; then
-            # smp_affinity hex zuerst — auf VantomKernel 4.14 CAF bestätigt funktionierend
-            # smp_affinity_list schlägt still fehl auf diesem Kernel (wurde getestet)
-            # c0 = cpu6+cpu7 (Prime), 3f = cpu0-5 (Silver), 3e = cpu1-5
-            printf '%s' "c0" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ $irq_num ($irq_name) → Prime (c0/cpu6-7)"
+            printf '%s' "40" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ $irq_num ($irq_name) → cpu6 (0x40/Gold)"
 
-        # GPU Completion → Gold (cpu6-7)
+        # GPU Completion → cpu6 (0x40): nah am RenderThread
         elif echo "$irq_name" | grep -qiE "kgsl|kgsl3d|adreno"; then
-            printf '%s' "c0" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ $irq_num ($irq_name) → Prime (c0/cpu6-7)"
+            printf '%s' "40" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ $irq_num ($irq_name) → cpu6 (0x40/Gold)"
 
-        # UFS/Storage → Silver (cpu0-5)
+        # UFS/Storage → cpu1 (0x02): Silver, nicht cpu0 (system tasks)
         elif echo "$irq_name" | grep -qiE "ufshc|ufs|mmc|sdhci|msdc"; then
-            printf '%s' "3f" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ $irq_num ($irq_name) → Silver (3f/cpu0-5)"
+            printf '%s' "02" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ $irq_num ($irq_name) → cpu1 (0x02/Silver)"
 
-        # Netzwerk → Silver (cpu1-5, lässt cpu0 für System)
+        # Netzwerk → cpu2 (0x04): Silver, getrennt von UFS auf cpu1
         elif echo "$irq_name" | grep -qiE "wlan|rmnet|ipa|smd|gsi|qcom-net"; then
-            printf '%s' "3e" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ $irq_num ($irq_name) → Silver (3e/cpu1-5)"
+            printf '%s' "04" > "${irq_dir}smp_affinity" 2>/dev/null || true
+            dbg "IRQ $irq_num ($irq_name) → cpu2 (0x04/Silver)"
         fi
     done
+    dbg "IRQ affinity applied: Touch/GPU→cpu6(40) UFS→cpu1(02) Net→cpu2(04)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -573,7 +578,7 @@ sched_gaming() {
     w /proc/sys/kernel/sched_util_clamp_min "300"
     w /proc/sys/kernel/sched_util_clamp_max "1024"
 
-    log "Sched: WALT+schedtune+IRQ(Touch/GPU→Gold,UFS→3f,Net→fc)+msm_perf"
+    log "Sched: WALT+schedtune+IRQ(Touch/GPU→cpu6/40,UFS→cpu1/02,Net→cpu2/04)+msm_perf"
 }
 
 sched_balanced() {
@@ -1133,7 +1138,9 @@ enter_competitive() {
     local irq_dir irq_name
     for irq_dir in /proc/irq/*/; do
         irq_name=$(cat "${irq_dir}actions" 2>/dev/null)
-        echo "$irq_name" | grep -qiE "wlan|rmnet|ipa|smd|gsi" &&             printf '%s' "fc" > "${irq_dir}smp_affinity" 2>/dev/null || true
+        # Net → cpu2 (0x04): confirmed single-CPU kernel, fc invalid
+        echo "$irq_name" | grep -qiE "wlan|rmnet|ipa|smd|gsi" && \
+            printf '%s' "04" > "${irq_dir}smp_affinity" 2>/dev/null || true
     done
     setprop debug.sf.disable_backpressure   "1" 2>/dev/null || true
     setprop debug.sf.enable_gl_backpressure "0" 2>/dev/null || true
@@ -1391,7 +1398,7 @@ printf '%d\n' "$$" > "$LOCK"
 # DEBUG Flag initial laden
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-log "k6a-controller v7.15 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
+log "k6a-controller v7.18 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
 log "Topology: Silver=cpu0-5/policy0 Prime=cpu6-7/policy6(max2304MHz)"
 dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
 
@@ -1425,13 +1432,24 @@ while true; do
     if [ "$RELOAD_FLAG" = "1" ]; then
         RELOAD_FLAG=0
         DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
-        log "Config neu geladen (SIGHUP) — State=$STATE"
+        _reload_manual=$(cat "$MANUAL_P" 2>/dev/null || printf 'balanced')
+        log "Config neu geladen (SIGHUP) — State=$STATE manual=$_reload_manual"
         dbg "debug=$DEBUG thermal_disable=$(cfg thermal_disable) thread_pin=$(cfg thread_pin_enable)"
         LAST_CFG_MTIME=$(cfg_mtime)
+        # Re-enter basierend auf STATE wenn in einem Überwachungs-State (THERMAL_LIMIT),
+        # sonst manual_profile folgen — verhindert dass Balanced reapplied wird
+        # wenn manual=gaming und settings.conf sich ändert
         case "$STATE" in
-            GAMING|THERMAL_LIMIT) enter_gaming   ;;
-            COMPETITIVE)          enter_competitive ;;
-            *)                    enter_balanced  ;;
+            THERMAL_LIMIT)
+                enter_thermal_limit "$(thermal_cpu_temp)" ;;
+            *)
+                case "$_reload_manual" in
+                    gaming)      enter_gaming      ;;
+                    competitive) [ "$(cfg thermal_disable)" = "1" ] && enter_competitive || enter_gaming ;;
+                    battery)     enter_battery     ;;
+                    *)           enter_balanced    ;;
+                esac
+                ;;
         esac
         write_data
         # Debounce: verhindert doppeltes Feuern von SIGHUP + mtime im selben Tick
@@ -1446,11 +1464,20 @@ while true; do
         # 300ms warten: WebUI schreibt Config in mehreren Writes
         sleep 0.3
         LAST_CFG_MTIME=$(cfg_mtime)
-        log "Config changed (mtime) — reapplying $STATE"
+        _reload_manual=$(cat "$MANUAL_P" 2>/dev/null || printf 'balanced')
+        log "Config changed (mtime) — reapplying manual=$_reload_manual (was STATE=$STATE)"
+        # Gleiche Logik wie SIGHUP: manual_profile folgen, nicht STATE
         case "$STATE" in
-            GAMING|THERMAL_LIMIT) enter_gaming   ;;
-            COMPETITIVE)          enter_competitive ;;
-            *)                    enter_balanced  ;;
+            THERMAL_LIMIT)
+                enter_thermal_limit "$(thermal_cpu_temp)" ;;
+            *)
+                case "$_reload_manual" in
+                    gaming)      enter_gaming      ;;
+                    competitive) [ "$(cfg thermal_disable)" = "1" ] && enter_competitive || enter_gaming ;;
+                    battery)     enter_battery     ;;
+                    *)           enter_balanced    ;;
+                esac
+                ;;
         esac
         write_data
     fi
