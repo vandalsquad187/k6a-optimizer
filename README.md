@@ -7,7 +7,7 @@ Vantom
 ##Stable Release Soon!
 
 ## Download
-
+outdated contact me if u want to test 
 Go to **[Actions](../../actions/workflows/build.yml)** → latest run → **Artifacts** → download 
 
 Flash via KernelSU Next 
