@@ -4,9 +4,9 @@ Module Designed for **Redmi Note 12 Pro 4G (sweet2)(sweet_k6a)**
 SoC: Snapdragon 730 (SM7150) · Kernel: 4.14 CAF
 Vantom 
 ---
-##Stable Release Soon!
+🔜Stable Release Soon!
 
-## Download
+## Download 
 
 🔸contact me if u want to test latest version
 
