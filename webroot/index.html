@@ -526,7 +526,7 @@ window._togTs["conf_thermal"]=Date.now();
         </div>
         <label class="sw g">
           <input type="checkbox" id="tog-wifi-ps"
-            onchange="saveConf('wifi_powersave_disable',this.checked?'1':'0');
+            onchange="saveConf('wifi_ps_disable',this.checked?'1':'0');
                       toast(this.checked?'📶 WiFi PS OFF':'📶 WiFi PS ON')">
           <span class="sw-t"></span>
         </label>
@@ -995,14 +995,14 @@ function applyData(d) {
         tweaks.push({ c:'lo', t:'✅ Selective thermal zones (BCL/PMIC safe)' });
         tweaks.push({ c:'lo', t:'✅ ZRAM lz4 / 2GB disksize' });
         tweaks.push({ c:'lo', t:'✅ LMK minfree tuned (' + profile + ')' });
-        tweaks.push({ c:'lo', t:'✅ I/O ' + (profile==='gaming'||profile==='competitive' ? 'noop 128KB' : profile==='battery' ? 'cfq 128KB' : 'cfq 512KB') });
+        tweaks.push({ c:'lo', t:'✅ I/O mq-deadline 128KB (UFS blk-mq)' });
         tweaks.push({ c:'lo', t:'✅ Foreground detection binder-free' });
         tweaks.push({ c:'lo', t:'✅ RAM guard during gaming' });
         tweaks.push({ c:'lo', t:'✅ zone24=Silver zone25=Gold (verifiziert)' });
         if (profile === 'gaming' || profile === 'competitive') {
-            tweaks.push({ c:'lo', t:'✅ LMH/DCVS disabled (no HW throttle)' });
+            tweaks.push({ c:'lw', t:'🔥 Thermal Engine: suspended (gaming/competitive)' });
         } else {
-            tweaks.push({ c:'lo', t:'✅ LMH/DCVS active (hardware protected)' });
+            tweaks.push({ c:'lo', t:'✅ Thermal Engine: active' });
         }
         // Profile-spezifisch
         if (profile === 'gaming' || profile === 'competitive') {
@@ -1011,7 +1011,7 @@ function applyData(d) {
             tweaks.push({ c:'lo', t:'✅ uclamp.min=' + (profile==='competitive' ? '60' : '50') + '% top-app' });
             tweaks.push({ c:'lo', t:'✅ cpuset top-app=0-7 latency_sensitive=1' });
             tweaks.push({ c:'lo', t:'✅ sched_upmigrate=' + (profile==='competitive' ? '70' : '80') + ' (RenderThread→Gold)' });
-            tweaks.push({ c:'lo', t:'✅ dirty_ratio=5 (Asset-Streams)' });
+            tweaks.push({ c:'lo', t:'✅ dirty_ratio=10 (Asset-Streams)' });
             tweaks.push({ c:'lo', t:'✅ GPU ' + (profile==='competitive' ? 'locked 800MHz' : '650-800MHz (msm-adreno-tz)') });
             tweaks.push({ c:'lo', t:'✅ GPU thermal_pwrlevel=0 (governor free)' });
             tweaks.push({ c:'lo', t:'✅ SF backpressure disabled' });
@@ -1033,7 +1033,6 @@ function applyData(d) {
             tweaks.push({ c:'lo', t:'✅ Gold 652-2304MHz schedutil' });
         }
         // Konditionale Toggles
-        tweaks.push({ c:'lw', t:'🔥 Thermal Engine: KILLED (gaming/competitive)' });
         if (d.conf_spoof_enable && d.conf_spoof_enable.trim()==='1')
             tweaks.push({ c:'li', t:'🧊 Battery Spoof ' + (d.conf_spoof_temp||'25').trim() + '°C' });
         // v7.6+ Features
