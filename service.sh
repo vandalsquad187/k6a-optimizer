@@ -1,9 +1,76 @@
 #!/system/bin/sh
-# BadazZ89 k6a Optimizer — service.sh  v1.0
-# Fix: Lock-File wird NACH boot_completed gesetzt, nicht davor.
-#   Bug: KernelSU startet service.sh mehrfach während Boot.
-# Fix: Lock erst nach Boot damit mehrfache KernelSU-Starts kein Problem
-_log "k6a service.sh v1.0: starte k6a-controller"
+# BadazZ89 k6a Optimizer — service.sh  v8.0
+# ─────────────────────────────────────────────────────────────────────────────
+# v7.10 Fix: Lock-File wird NACH boot_completed gesetzt, nicht davor.
+#   v7.9 Bug: KernelSU startet service.sh mehrfach während Boot.
+#   Zweite Instanz sah erste als "aktiv" (noch im Boot-Wait) und beendete sich.
+#   Erste Instanz starb dann lautlos ohne Controller zu starten.
+#   Fix: Boot-Wait zuerst, dann Lock — nur eine Instanz kommt durch.
+
+MODDIR=${0%/*}
+CTRL="$MODDIR/bin/k6a-controller"
+LOG="$MODDIR/config/service.log"
+CONF="$MODDIR/config/settings.conf"
+LOCKFILE="$MODDIR/run/service.lock"
+
+_log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1" >> "$LOG"; }
+
+_rotate_log() {
+    [ -f "$LOG" ] || return
+    local size; size=$(wc -c < "$LOG" 2>/dev/null) || return
+    [ "$size" -gt 204800 ] && mv "$LOG" "${LOG}.old"
+}
+
+_uptime_s() { cut -d. -f1 /proc/uptime 2>/dev/null || date +%s; }
+
+mkdir -p "$MODDIR/run" "$MODDIR/config"
+_rotate_log
+
+# ── Boot-Delay aus Config ─────────────────────────────────────────────────────
+BOOT_DELAY=$(grep "^boot_delay=" "$CONF" 2>/dev/null | cut -d= -f2)
+case "$BOOT_DELAY" in ''|*[!0-9]*) BOOT_DELAY=8 ;; esac
+[ "$BOOT_DELAY" -lt 3  ] && BOOT_DELAY=3
+[ "$BOOT_DELAY" -gt 60 ] && BOOT_DELAY=60
+
+# ── Boot-Wait ZUERST — dann Lock ──────────────────────────────────────────────
+# FIX v7.10: Lock erst nach Boot damit mehrfache KernelSU-Starts kein Problem
+until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 3; done
+
+_ready_wait=0
+until [ -d /sys/class/thermal ] && [ -d /sys/devices/system/cpu/cpufreq ]; do
+    sleep 1; _ready_wait=$(( _ready_wait + 1 ))
+    [ "$_ready_wait" -ge 30 ] && break
+done
+[ "$_ready_wait" -gt 0 ] && _log "Ready-State: ${_ready_wait}s gewartet"
+
+sleep "$BOOT_DELAY"
+_rotate_log
+
+# ── Multi-Instance Lock — nach Boot-Wait ──────────────────────────────────────
+if [ -f "$LOCKFILE" ]; then
+    _old_pid=$(cat "$LOCKFILE" 2>/dev/null)
+    if [ -n "$_old_pid" ] && [ -d "/proc/$_old_pid" ]; then
+        _log "WARN: service.sh bereits aktiv (PID $_old_pid) — beende"
+        exit 0
+    fi
+    rm -f "$LOCKFILE"
+fi
+echo $$ > "$LOCKFILE"
+_HC_PID=""; _WD_PID=""
+_cleanup() {
+    [ -n "$_HC_PID" ] && kill "$_HC_PID" 2>/dev/null || true
+    [ -n "$_WD_PID" ] && kill "$_WD_PID" 2>/dev/null || true
+    rm -f "$LOCKFILE"
+}
+trap '_cleanup; exit' EXIT INT TERM
+
+# ── Controller-Check ──────────────────────────────────────────────────────────
+[ -x "$CTRL" ] || {
+    _log "ERR: k6a-controller nicht gefunden oder nicht ausführbar"
+    exit 1
+}
+
+_log "k6a service.sh v8.0: starte k6a-controller"
 
 # ── Health-Check: PID-Verifikation nach Start ─────────────────────────────────
 _health_check() {
@@ -30,7 +97,7 @@ _thermal_watchdog() {
             local profile
             profile=$(cat "$state_file" 2>/dev/null)
             case "$profile" in
-                competitive|gaming)
+                cooking)
                     _log "WATCHDOG: Controller tot ($profile) → restore thermal"
                     . "$MODDIR/bin/k6a-lib.sh"
                     thermal_trips_restore

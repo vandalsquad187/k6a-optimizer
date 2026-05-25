@@ -5,6 +5,33 @@ Kernel: VantomKernel 4.14.356-openela-rc1 (EAS/uclamp)
 
 ---
 
+## v9.0 — 2026-05-25
+
+### 2-Mode Architecture (Breaking Change)
+
+- **Daily + Cooking only**: 4 Profiles (balanced/gaming/competitive/battery) → 2 Profiles (daily/cooking)
+- **Daily**: Old balanced values — EAS=1, uclamp_min=128, GPU 267-800MHz idler, Silver 576-1804, Gold 652-2304
+- **Cooking**: Old competitive values — EAS=0, sched_boost=1, uclamp_min=60, GPU locked 800MHz, Silver 1497-1804, Gold 2169-2304
+- **No light/full split**: Single cooking level, CPU hotplug toggle-controlled
+- **List of removed**: gpu_battery, io_battery, vm_battery, lmk_battery, sched_battery, lru_gen_battery, lru_gen_*, sched_competitive, gpu_gaming, sched_gaming, vm_gaming, io_gaming, lmk_gaming, lru_gen_gaming, wakelock_block_gaming, net_gaming, bt_gaming, net_competitive, freeze_for, unfreeze_for, apply_adaptive_thermal, thermal_zone_list, enter_battery, enter_gaming, enter_competitive, sf_gaming, sf_balanced
+
+### WebUI
+
+- **2 profile cards**: Daily + Cooking
+- **Removed toggles**: adaptive_thermal (no longer applicable)
+- **Updated per-app profiles**: daily/cooking options only
+- **Updated badges, colors, tweaks list** for 2-mode
+
+### Files
+
+- **k6a-lib.sh**: All functions renamed to *_daily/*_cooking, dead code removed (~200 lines lighter)
+- **k6a-controller**: 4 enter_* → enter_daily/enter_cooking, simplified TARGET logic
+- **settings.conf**: adaptive_thermal removed, default cpu_hotplug=0, net_qos=1
+- **customize.sh**: Updated defaults for 2-mode, v9.0 branding
+- **Rebornv25.zip**: Built with all changes
+
+---
+
 ## v1.0 — 2026-05-25
 
 ### Neu (Architektur)

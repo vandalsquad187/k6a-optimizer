@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# BadazZ89 k6a Optimizer v1.0 — customize.sh
+# BadazZ89 k6a Optimizer v8.0 — customize.sh
 # SM7150 sweet_k6a — VantomKernel 4.14.356
 # KernelSU Next / Magisk kompatibel
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -9,9 +9,10 @@ SKIPUNZIP=1
 
 ui_print " "
 ui_print "╔══════════════════════════════════════╗"
-ui_print "║  BadazZ89 k6a Optimizer v1.0        ║"
+ui_print "║  BadazZ89 k6a Optimizer v9.0        ║"
 ui_print "║  SM7150 sweet_k6a // sweet2          ║"
 ui_print "║  VantomKernel 4.14.356               ║"
+ui_print "║  2-Mode: Daily + Cooking             ║"
 ui_print "╚══════════════════════════════════════╝"
 ui_print " "
 
@@ -40,13 +41,12 @@ if [ ! -f "$CONF" ]; then
     ui_print "> Creating default settings.conf..."
     cat > "$CONF" << 'CONF_EOF'
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a Optimizer v1.0 — settings.conf
+# k6a Optimizer v9.0 — settings.conf (2-Mode: daily + cooking)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Thermal
 thermal_disable=0
 thermal_prediction_enable=1
-adaptive_thermal=1
 
 # Battery
 battery_spoof_enable=0
@@ -54,11 +54,11 @@ battery_spoof_temp=25
 
 # Performance
 thread_pin_enable=1
-cpu_hotplug_enable=1
+cpu_hotplug_enable=0
 lru_gen_enable=1
 
 # Network
-net_qos_enable=0
+net_qos_enable=1
 wifi_ps_disable=1
 
 # System
@@ -77,7 +77,7 @@ fi
 
 # ── manual_profile ────────────────────────────────────────────────────────────
 if [ ! -f "$MODPATH/config/manual_profile" ]; then
-    printf 'balanced' > "$MODPATH/config/manual_profile"
+    printf 'daily' > "$MODPATH/config/manual_profile"
 fi
 
 # ── Log-Rotation beim Install ─────────────────────────────────────────────────

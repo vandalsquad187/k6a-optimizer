@@ -1,4 +1,4 @@
-# [BadazZ89] k6a Optimizer v1.0
+# [BadazZ89] k6a Optimizer v9.0
 
 KernelSU Next module for **Redmi Note 12 Pro 4G (sweet2 / sweet_k6a)**
 SoC: Snapdragon 730 (SM7150) · Kernel: VantomKernel 4.14.356-openela-rc1 (EAS/uclamp)
@@ -7,7 +7,7 @@ SoC: Snapdragon 730 (SM7150) · Kernel: VantomKernel 4.14.356-openela-rc1 (EAS/u
 
 ## Download
 
-Go to **[Actions](../../actions/workflows/build.yml)** → latest run → **Artifacts** → download `BadazZ89-k6a-Optimizer-v1.0.zip`
+Go to **[Actions](../../actions/workflows/build.yml)** → latest run → **Artifacts** → download `BadazZ89-k6a-Optimizer-v9.0.zip`
 
 Flash via KernelSU Next or Magisk, reboot.
 
@@ -17,33 +17,29 @@ Flash via KernelSU Next or Magisk, reboot.
 
 | Feature | Detail |
 |---|---|
+| **2-Mode Architecture** | Daily (EAS=1, balanced) + Cooking (EAS=0, max perf) — no light/full split |
 | **k6a-controller** | Shell-based state machine — single-writer pattern, no race conditions |
 | **k6a-lib.sh** | Modular shell library — sched, GPU, IO, VM, ZRAM, LMH, thermal, IRQ, LRU, net QoS, wakelock, freeze |
 | **Selective thermal disable** | CPU/GPU zones disabled, conn_therm/touch/battery kept active |
 | **Battery spoofing** | Reports low battery temp to prevent conn_therm HW interrupt |
-| **Competitive (COOK1NG)** | Full thermal disable + GPU lock 800MHz + EAS=0 — max FPS for CODM |
-| **Schedutil tuning** | 500µs up / 20000µs down in gaming, sched_boost=1, correct policy0/policy6 paths |
+| **Cooking (COOK1NG)** | Full thermal disable + GPU lock 800MHz + EAS=0 + Silver hotplug — max FPS for CODM |
+| **Schedutil tuning** | 500µs up / 20000µs down, sched_boost=1, uclamp_min=60 |
 | **UFS IO scheduler** | mq-deadline for blk-mq (noop/cfq unavailable on UFS) |
-| **ZRAM lz4** | Force lz4 compression, page-cluster=0 during gaming |
-| **VM gaming profile** | swappiness=10, dirty_ratio=10, page-cluster=0, extra_free_kbytes=24576 |
+| **ZRAM lz4** | Force lz4 compression, page-cluster=0 |
 | **Network QoS** | TC HTB — prioritizes CoD UDP ports (ingress/egress) |
-| **IRQ affinity** | Pin network/interrupts to Gold cores (CPU4-7) during gaming |
+| **IRQ affinity** | Pin network/interrupts to Gold cores during gaming |
 | **LRU_GEN** | Enable kernel MGLRU at boot |
 | **Thermal crash watchdog** | service.sh auto-restores thermal trips + daemons if controller dies |
-| **Multi-instance lock** | Prevents duplicate service.sh on kernelSU Next boot |
 | **k6a-daemon** | Rust WebSocket daemon — real-time WebUI updates (<100ms) |
-| **WebUI fallback** | Falls back to data.txt polling (with ping via separate .ping file) |
 
 ---
 
 ## Profiles
 
-| Profile | CPU Silver | CPU Gold | GPU | Thermal | Use case |
-|---|---|---|---|---|---|
-| **Battery** | 300-1401MHz | 300-1420MHz | 220-430MHz | enabled | Daily, music, idle |
-| **Balanced** | 300-1555MHz | 825-1843MHz | 430-600MHz | enabled | Daily + light gaming |
-| **Gaming** | 1248-1804MHz | 1843-2304MHz | 650-800MHz | disabled (surgical) | CODM default |
-| **Competitive** | 1497-1804MHz | 2169-2304MHz | 800MHz lock | full disable | CODM max FPS |
+| Profile | CPU Silver | CPU Gold | GPU | EAS | Thermal | Use case |
+|---|---|---|---|---|---|---|
+| **Daily** | 576-1804MHz | 652-2304MHz | 267-800MHz idler | on | enabled | Everyday use |
+| **Cooking** | 1497-1804MHz (+hotplug) | 2169-2304MHz | 800MHz locked | off | disabled (full) | CODM max FPS |
 
 ---
 
@@ -85,7 +81,7 @@ customize.sh                        — installer
 system.prop                         — boot-time props
 module.prop                         — module metadata
 webroot/
-  index.html                        — WebUI
+  index.html                        — WebUI (daily + cooking)
   ascii.txt                         — ASCII art logo
 ```
 

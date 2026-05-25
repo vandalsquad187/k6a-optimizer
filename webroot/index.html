@@ -56,11 +56,8 @@ background-image: radial-gradient(
 .h-name { font-size:20px; font-weight:800; color:#fff; }
 .h-sub  { font-size:9px; color:var(--muted); font-family:monospace; margin-top:0px; }
 .badge  { font-family:monospace; font-size:11px; padding:6px 14px; border-radius:20px; border:1px solid; letter-spacing:1px; font-weight:700; }
-/* Badge-Farbe = Profil-Kachel-Farbe: balanced=orange, gaming=rot, battery=grün */
-.badge.balanced { color:#ff9800;      border-color:rgba(255,152,0,.5);  background:rgba(255,152,0,.12); box-shadow:0 0 10px rgba(255,152,0,.15); }
-.badge.gaming   { color:var(--accent); border-color:rgba(229,57,53,.5);  background:rgba(229,57,53,.12); box-shadow:0 0 10px rgba(229,57,53,.2); }
-.badge.battery      { color:var(--green);   border-color:rgba(0,230,118,.4);  background:rgba(0,230,118,.08); }
-.badge.competitive  { color:#ff1744;    border-color:rgba(255,23,68,.6);  background:rgba(255,23,68,.15);  box-shadow:0 0 14px rgba(255,23,68,.35); }
+.badge.daily   { color:#ff9800;      border-color:rgba(255,152,0,.5);  background:rgba(255,152,0,.12); box-shadow:0 0 10px rgba(255,152,0,.15); }
+.badge.cooking { color:#ff1744;    border-color:rgba(255,23,68,.6);  background:rgba(255,23,68,.15);  box-shadow:0 0 14px rgba(255,23,68,.35); }
 
 .body { padding:14px 16px; max-width:480px; margin:0 auto; }
 
@@ -83,20 +80,16 @@ background-image: radial-gradient(
 .sec-title { font-size:10px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:var(--accent); margin-bottom:10px; display:flex; align-items:center; gap:8px; text-shadow:0 0 10px rgba(229,57,53,.4); }
 .sec-title::after { content:''; flex:1; height:1px; background: linear-gradient(to right, rgba(229,57,53,.4), transparent); }
 
-.profiles { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+.profiles { display:grid; gap:8px; }
 .pc { background:var(--card); border:2px solid var(--border); border-radius:12px; padding:16px 8px; text-align:center; cursor:pointer; user-select:none; transition: all .18s; }
 .pc:active { transform: scale(.96); }
-.pc.active.balanced { border-color:#ff9800;        background:rgba(255,152,0,.1);  box-shadow:0 0 16px rgba(255,152,0,.2); }
-.pc.active.gaming   { border-color:var(--accent);  background:rgba(229,57,53,.12); box-shadow:0 0 16px rgba(229,57,53,.3); }
-.pc.active.battery  { border-color:var(--green);   background:rgba(0,230,118,.08); box-shadow:0 0 16px rgba(0,230,118,.15); }
+.pc.active.daily   { border-color:#ff9800;        background:rgba(255,152,0,.1);  box-shadow:0 0 16px rgba(255,152,0,.2); }
+.pc.active.cooking { border-color:#ff1744; background:rgba(255,23,68,.14); box-shadow:0 0 18px rgba(255,23,68,.35); }
 .pc-icon { font-size:26px; margin-bottom:7px; }
 .pc-name { font-size:12px; font-weight:800; letter-spacing:.5px; }
 .pc-sub  { font-family:monospace; font-size:9px; color:var(--muted); margin-top:3px; }
-#pc-balanced    .pc-name { color:#ff9800; }
-#pc-gaming      .pc-name { color:var(--accent); }
-#pc-battery     .pc-name { color:var(--green);  }
-#pc-competitive .pc-name { color:#ff1744; }
-.pc.active.competitive  { border-color:#ff1744; background:rgba(255,23,68,.14); box-shadow:0 0 18px rgba(255,23,68,.35); }
+#pc-daily    .pc-name { color:#ff9800; }
+#pc-cooking  .pc-name { color:#ff1744; }
 
 .tog-list { display:flex; flex-direction:column; gap:2px; }
 .tog-row { background:var(--card); border:1px solid var(--border); border-left:2px solid rgba(229,57,53,.25); border-radius:10px; padding:13px 14px; display:flex; align-items:center; gap:12px; }
@@ -203,9 +196,9 @@ background-image: radial-gradient(
 .prog-btn { width:100%; padding:11px; border-radius:8px; background:rgba(229,57,53,.1); border:1px solid rgba(229,57,53,.3); color:var(--accent); font-weight:700; font-size:13px; cursor:pointer; transition:.18s; }
 .cache-last { font-family:monospace; font-size:10px; color:var(--muted); margin-top:8px; min-height:16px; }
 
-/* ── Profile Grid fix (4 columns) ──────────────────────────────────────── */
+/* ── Profile Grid (2 columns) ──────────────────────────────────────────── */
 .profiles {
-  grid-template-columns: repeat(4, 1fr) !important;
+  grid-template-columns: repeat(2, 1fr) !important;
 }
 
 /* ── System Grid (gleichwertige Spalten) ───────────────────────────────── */
@@ -252,7 +245,7 @@ background-image: radial-gradient(
 <div class="body">
 
   <div id="comp-banner" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(255,23,68,.12);border:1px solid rgba(255,23,68,.4);border-radius:8px;font-family:monospace;font-size:10px;color:#ff4444;letter-spacing:.5px;text-align:center;">
-    🔥 COOK1NG MODE ACTIVE — Need Thermal Disabler activation · Faster Battery Drain👹
+    🔥 COOKING MODE — Thermal Disabler active · Silber-Cores optional offline · Higher Battery Drain👹
   </div>
 
   <!-- 1. SERVICE LOG -->
@@ -265,25 +258,15 @@ background-image: radial-gradient(
   <div class="section">
     <div class="sec-title">>Pr∅fileZ:</div>
     <div class="profiles">
-      <div class="pc balanced" id="pc-balanced" onclick="applyProfile('balanced')">
+      <div class="pc daily" id="pc-daily" onclick="applyProfile('daily')">
         <div class="pc-icon">⚙️</div>
-        <div class="pc-name">Balanced</div>
-        <div class="pc-sub">schedutil</div>
+        <div class="pc-name">Daily</div>
+        <div class="pc-sub">EAS on · schedutil</div>
       </div>
-      <div class="pc gaming" id="pc-gaming" onclick="applyProfile('gaming')">
-        <div class="pc-icon">⚔️</div>
-        <div class="pc-name">Gaming</div>
-        <div class="pc-sub">schedutil</div>
-      </div>
-      <div class="pc competitive" id="pc-competitive" onclick="applyProfile('competitive')">
+      <div class="pc cooking" id="pc-cooking" onclick="applyProfile('cooking')">
         <div class="pc-icon">🔥</div>
         <div class="pc-name">COOK1NG</div>
-        <div class="pc-sub">schedutil+</div>
-      </div>
-      <div class="pc battery" id="pc-battery" onclick="applyProfile('battery')">
-        <div class="pc-icon">🛡️</div>
-        <div class="pc-name">Battery</div>
-        <div class="pc-sub">powersave</div>
+        <div class="pc-sub">EAS off · schedutil+</div>
       </div>
     </div>
   </div>
@@ -471,20 +454,7 @@ window._togTs["conf_thermal"]=Date.now();
         </div>
       </div>
 
-      <!-- Adaptive Thermal Control -->
-      <div class="tog-row">
-        <div class="tog-ico">🌡️</div>
-        <div class="tog-info">
-          <div class="tog-name">Adaptive Thermal</div>
-          <div class="tog-desc">Target-Temp je Profil: Gaming 85°C / Competitive 95°C / Balanced 75°C</div>
-        </div>
-        <label class="sw y">
-          <input type="checkbox" id="tog-adaptive-thermal"
-            onchange="saveConf('adaptive_thermal',this.checked?'1':'0');
-                      toast(this.checked?'🌡 Adaptive Thermal ON':'🌡 Adaptive Thermal OFF')">
-          <span class="sw-t"></span>
-        </label>
-      </div>
+
 
       <!-- CPU Hotplug -->
       <div class="tog-row">
@@ -685,45 +655,31 @@ function toast(msg) {
 
 // ── Profil UI ─────────────────────────────────────────────────────────────────
 function setProfileUI(p, thermalOn) {
-    p = (p || 'balanced').trim();
-    ['balanced', 'gaming', 'competitive', 'battery'].forEach(function(x) {
+    p = (p || 'daily').trim();
+    ['daily', 'cooking'].forEach(function(x) {
         var el = document.getElementById('pc-' + x);
         if (el) el.classList.toggle('active', x === p);
     });
     var b = document.getElementById('badge');
     b.className   = 'badge ' + p;
-    // Fix #10: COOK1NG ohne thermal_disable → Badge zeigt GAMING* (intern läuft GAMING)
-    var compWithoutThermal = (p === 'competitive' && !thermalOn);
-    b.textContent = compWithoutThermal      ? '⚔️ GAMING*'
-                  : p === 'gaming'          ? '⚔️ GAMING'
-                  : p === 'competitive'     ? '🔥 C00k1nG'
-                  : p === 'battery'         ? '🛡️ BATTERY'
-                  : '⚙️ BALANCED';
-    if (compWithoutThermal) b.title = 'COOK1NG ohne Thermal Disabler → läuft als GAMING';
-    else b.title = '';
-    // Competitive banner
+    b.textContent = p === 'cooking' ? '🔥 C00k1nG' : '⚙️ DAILY';
+    b.title = '';
     var banner = document.getElementById('comp-banner');
-    if (banner) banner.style.display = p === 'competitive' ? 'block' : 'none';
+    if (banner) banner.style.display = p === 'cooking' ? 'block' : 'none';
     // Indikator-Balken sofort aktualisieren
     var barEl = document.getElementById('profile-bar');
     if (barEl) {
-        var c = p === 'gaming'      ? 'var(--accent)'
-              : p === 'competitive' ? '#ff1744'
-              : p === 'battery'     ? 'var(--green)'
-              : '#ff9800';
-        var g = p === 'gaming'      ? 'rgba(229,57,53,.5)'
-              : p === 'competitive' ? 'rgba(255,23,68,.6)'
-              : p === 'battery'     ? 'rgba(0,230,118,.4)'
-              : 'rgba(255,152,0,.4)';
+        var c = p === 'cooking' ? '#ff1744' : '#ff9800';
+        var g = p === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)';
         barEl.style.background = c;
         barEl.style.boxShadow  = '0 0 8px ' + g;
     }
 }
 
 function applyProfile(p) {
-    if (p === 'competitive') {
+    if (p === 'cooking') {
         var th = document.getElementById('tog-thermal');
-        if (th && !th.checked) toast('⚠ Thermal Disabler empfohlen für Ranked!');
+        if (th && !th.checked) toast('⚠ Thermal Disabler empfohlen für Cooking!');
     }
     _profTs = Date.now();
     _profClickTs = Date.now();
@@ -734,7 +690,7 @@ function applyProfile(p) {
     toast('Profil: ' + p.toUpperCase());
     setTimeout(function(){
         loadData(function(d){
-            var actual = (d.manual_profile || d.profile || 'balanced').trim();
+            var actual = (d.manual_profile || d.profile || 'daily').trim();
             if (window._pendingProf && actual !== window._pendingProf) {
                 toast('⚠ Debounce aktiv — Wechsel in ~' + (15 - Math.round((Date.now() - _profClickTs) / 1000)) + 's');
             }
@@ -766,16 +722,9 @@ function renderSettings(d) {
     // requestAnimationFrame aufgerufen, doppelt verschachtelter rAF schadet
     var html = '';
 
-    // Profile: show manual intent, not internal state
-    var prof = (d.profile || d.manual_profile || 'balanced').trim();
-    var profLabel = prof.toUpperCase();
-    var profCls = prof === 'gaming' ? 'num'
-                : prof === 'competitive' ? 'num'
-                : prof === 'battery' ? 'on' : 'off';
-    if (prof === 'gaming' && d.manual_profile && d.manual_profile.trim() === 'competitive') {
-        profLabel = 'COOK1NG';
-        profCls = 'num';
-    }
+    var prof = (d.profile || d.manual_profile || 'daily').trim();
+    var profLabel = prof === 'cooking' ? 'COOK1NG' : 'DAILY';
+    var profCls = prof === 'cooking' ? 'num' : 'off';
     html += row('profile', profLabel, profCls);
 
     // Thermal
@@ -812,10 +761,6 @@ function renderSettings(d) {
     if (dbgOn) html += row('debug', '<span class="s-val warn">VERBOSE</span>');
     else html += row('debug', '<span class="s-val off">OFF</span>');
 
-    // v7.6 Neue Settings
-    var atOn = d.conf_adaptive_thermal && d.conf_adaptive_thermal.trim()==='1';
-    html += row('adaptive_thermal',
-        atOn ? '<span class="s-val on">ON</span>' : '<span class="s-val off">OFF</span>');
     var hpOn = d.conf_cpu_hotplug && d.conf_cpu_hotplug.trim()==='1';
     html += row('cpu_hotplug',
         hpOn ? '<span class="s-val warn">ON ⚠</span>' : '<span class="s-val off">OFF</span>');
@@ -885,17 +830,10 @@ function applyData(d) {
     if (d.uptime)  document.getElementById('inf-uptime').textContent  = d.uptime.trim();
 
 
-    // Service PID — Farbe folgt aktivem Profil
     var pe = document.getElementById('inf-pid');
-    var activeProf = (d.manual_profile || d.profile || 'balanced').trim();
-    var profColor = activeProf === 'gaming' ? 'var(--accent)'
-                 : activeProf === 'competitive' ? '#ff1744'
-                 : activeProf === 'battery' ? 'var(--green)'
-                 : '#ff9800'; // balanced = orange
-    var profGlow  = activeProf === 'gaming' ? 'rgba(229,57,53,.5)'
-                 : activeProf === 'competitive' ? 'rgba(255,23,68,.6)'
-                 : activeProf === 'battery' ? 'rgba(0,230,118,.4)'
-                 : 'rgba(255,152,0,.4)';
+    var activeProf = (d.manual_profile || d.profile || 'daily').trim();
+    var profColor = activeProf === 'cooking' ? '#ff1744' : '#ff9800';
+    var profGlow  = activeProf === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)';
     if (d.pid && d.pid.trim() && d.pid.trim() !== "0") {
         _pidMiss = 0;
         pe.textContent = "PID " + d.pid.trim();
@@ -927,11 +865,10 @@ function applyData(d) {
             pingEl.textContent = 'Timeout';
             pingEl.className   = 'ping-big bad';
         }
-        // ping_stale kommt direkt vom Controller — zuverlässiger als activeProf ableiten
         var isStale = (d.ping_stale && d.ping_stale.trim() === '1')
-                   || (activeProf === 'gaming' || activeProf === 'competitive');
+                   || (activeProf === 'cooking');
         pingEl.style.opacity = isStale ? '0.45' : '1';
-        pingEl.title = isStale ? '~ Ping wird im Gaming-Modus nicht aktualisiert' : '';
+        pingEl.title = isStale ? '~ Ping wird im Cooking-Modus nicht aktualisiert' : '';
     }
 
     // Cache — Fortschrittsbalken (controller schickt GB als float)
@@ -974,11 +911,8 @@ function applyData(d) {
             if (l.includes('[ERROR]'))      return '<div style="color:var(--red);font-weight:700;">'    + l + '</div>';
             if (l.includes('[WARN]'))       return '<div style="color:var(--yellow);">'                 + l + '</div>';
             if (l.includes('[DBG]'))        return '<div style="color:var(--muted);font-size:10px;">'   + l + '</div>';
-            // Legacy Farbkodierung (rückwärtskompatibel)
-            if (l.includes('GAMING'))       return '<div class="lw">'  + l + '</div>';
-            if (l.includes('BATTERY'))      return '<div class="li">'  + l + '</div>';
-            if (l.includes('BALANCED'))     return '<div class="lo">'  + l + '</div>';
-            if (l.includes('COMPETITIVE'))  return '<div style="color:var(--red);">' + l + '</div>';
+            if (l.includes('COOKING'))  return '<div style="color:var(--red);">' + l + '</div>';
+            if (l.includes('DAILY'))    return '<div class="lo">'  + l + '</div>';
             if (l.includes('THERMAL'))      return '<div style="color:var(--yellow);">' + l + '</div>';
             if (l.includes('recovered'))    return '<div class="lo">'  + l + '</div>';
             if (l.match(/error|fehler/i))   return '<div class="le">'  + l + '</div>';
@@ -987,66 +921,45 @@ function applyData(d) {
         lb.scrollTop = 0;
     }
 
-    // Tweaks list — v8.0 verifizierte Werte
     (function() {
-        var profile = (d.profile || 'balanced').trim();
+        var profile = (d.profile || 'daily').trim();
         var tweaks = [];
-        // Immer aktiv
         tweaks.push({ c:'lo', t:'✅ Selective thermal zones (BCL/PMIC safe)' });
-        tweaks.push({ c:'lo', t:'✅ ZRAM lz4 / 2GB disksize' });
-        tweaks.push({ c:'lo', t:'✅ LMK minfree tuned (' + profile + ')' });
-        tweaks.push({ c:'lo', t:'✅ I/O mq-deadline 128KB (UFS blk-mq)' });
-        tweaks.push({ c:'lo', t:'✅ Foreground detection binder-free' });
-        tweaks.push({ c:'lo', t:'✅ RAM guard during gaming' });
+        tweaks.push({ c:'lo', t:'✅ ZRAM lz4 / page-cluster=0' });
+        tweaks.push({ c:'lo', t:'✅ LMK minfree tuned (default)' });
+        tweaks.push({ c:'lo', t:'✅ I/O mq-deadline (UFS blk-mq)' });
         tweaks.push({ c:'lo', t:'✅ zone24=Silver zone25=Gold (verifiziert)' });
-        if (profile === 'gaming' || profile === 'competitive') {
-            tweaks.push({ c:'lw', t:'🔥 Thermal Engine: suspended (gaming/competitive)' });
+        if (profile === 'cooking') {
+            tweaks.push({ c:'lw', t:'🔥 Thermal Engine: suspended' });
         } else {
             tweaks.push({ c:'lo', t:'✅ Thermal Engine: active' });
         }
-        // Profile-spezifisch
-        if (profile === 'gaming' || profile === 'competitive') {
-            tweaks.push({ c:'lo', t:'✅ TCP BBR + low_latency' });
-            tweaks.push({ c:'lo', t:'✅ TCP SACK + retries=5' });
-            tweaks.push({ c:'lo', t:'✅ uclamp.min=' + (profile==='competitive' ? '60' : '50') + '% top-app' });
+        if (profile === 'cooking') {
+            tweaks.push({ c:'lo', t:'✅ TCP BBR + low_latency + QoS' });
+            tweaks.push({ c:'lo', t:'✅ uclamp.min=60% top-app' });
             tweaks.push({ c:'lo', t:'✅ cpuset top-app=0-7 latency_sensitive=1' });
-            tweaks.push({ c:'lo', t:'✅ sched_upmigrate=' + (profile==='competitive' ? '70' : '80') + ' (RenderThread→Gold)' });
-            tweaks.push({ c:'lo', t:'✅ dirty_ratio=10 (Asset-Streams)' });
-            tweaks.push({ c:'lo', t:'✅ GPU ' + (profile==='competitive' ? 'locked 800MHz' : '650-800MHz (msm-adreno-tz)') });
-            tweaks.push({ c:'lo', t:'✅ GPU thermal_pwrlevel=0 (governor free)' });
+            tweaks.push({ c:'lo', t:'✅ sched_upmigrate=70 (RenderThread→Gold)' });
+            tweaks.push({ c:'lo', t:'✅ GPU locked 800MHz' });
             tweaks.push({ c:'lo', t:'✅ SF backpressure disabled' });
-            tweaks.push({ c:'lo', t:'✅ SF latch_unsignaled=0 (AOSP-safe)' });
-            if (profile === 'competitive') {
-                tweaks.push({ c:'lw', t:'🔥 Gold min=2169MHz schedutil+ (up=500µs)' });
-                tweaks.push({ c:'lw', t:'🔥 Silver min=1497MHz schedutil' });
-            } else {
-                tweaks.push({ c:'lo', t:'✅ Gold min=1843MHz schedutil' });
-                tweaks.push({ c:'lo', t:'✅ Silver min=1248MHz schedutil' });
-            }
-        } else if (profile === 'battery') {
-            tweaks.push({ c:'lo', t:'✅ GPU max=355MHz (powersave, verifiziert)' });
-            tweaks.push({ c:'lo', t:'✅ Silver max=1324MHz | Gold max=1555MHz' });
-            tweaks.push({ c:'lo', t:'✅ swappiness=60 / vfs_cache=200' });
+            tweaks.push({ c:'lw', t:'🔥 Gold min=2169MHz schedutil+ (up=500µs)' });
+            tweaks.push({ c:'lw', t:'🔥 Silver min=1497MHz schedutil' });
+            tweaks.push({ c:'lw', t:'🔥 EAS=0 | sched_boost=1' });
         } else {
             tweaks.push({ c:'lo', t:'✅ GPU 267-800MHz (governor free, idler ON)' });
             tweaks.push({ c:'lo', t:'✅ Silver 576-1804MHz schedutil' });
             tweaks.push({ c:'lo', t:'✅ Gold 652-2304MHz schedutil' });
+            tweaks.push({ c:'lo', t:'✅ EAS=1 | uclamp_min=128' });
         }
-        // Konditionale Toggles
         if (d.conf_spoof_enable && d.conf_spoof_enable.trim()==='1')
             tweaks.push({ c:'li', t:'🧊 Battery Spoof ' + (d.conf_spoof_temp||'25').trim() + '°C' });
-        // v7.6+ Features
-        if (d.conf_adaptive_thermal && d.conf_adaptive_thermal.trim()==='1')
-            tweaks.push({ c:'lo', t:'✅ Adaptive Thermal (' + profile + ')' });
         if (d.conf_cpu_hotplug && d.conf_cpu_hotplug.trim()==='1')
-            tweaks.push({ c:'lw', t:'⚡ CPU Hotplug: Silver OFF (Competitive)' });
+            tweaks.push({ c:'lw', t:'⚡ CPU Hotplug: Silver OFF (Cooking)' });
         if (d.conf_net_qos && d.conf_net_qos.trim()==='1')
             tweaks.push({ c:'lo', t:'✅ Network QoS (TC HTB)' });
         if (d.conf_wifi_ps && d.conf_wifi_ps.trim()==='1')
             tweaks.push({ c:'lo', t:'✅ WiFi Power-Save OFF (watchdog)' });
         if (d.conf_lru_gen && d.conf_lru_gen.trim()==='1')
-            tweaks.push({ c:'lo', t:'✅ LRU_GEN aggressive reclaim' });
-        // system.prop (immer aktiv)
+            tweaks.push({ c:'lo', t:'✅ LRU_GEN enabled' });
         tweaks.push({ c:'li', t:'✅ HWUI render_ahead=4ms' });
         tweaks.push({ c:'li', t:'✅ QTI inputopts 0.6ms slop' });
         document.getElementById('tweaks-box').innerHTML = tweaks.map(function(t) {
@@ -1067,8 +980,6 @@ function applyData(d) {
         el.checked = d[key].trim() === "1";
     };
     chkLocked('tog-thermal',   'conf_thermal');
-    // v7.6+ Neue Toggles
-    chk('tog-adaptive-thermal', 'conf_adaptive_thermal');
     chk('tog-hotplug',          'conf_cpu_hotplug');
     chk('tog-net-qos',          'conf_net_qos');
     chk('tog-wifi-ps',          'conf_wifi_ps');
@@ -1089,7 +1000,7 @@ function applyData(d) {
     }
 
     if ((Date.now() - _profTs) > PROF_LOCK_MS) {
-        var p = (d.manual_profile || d.profile || 'balanced').trim();
+        var p = (d.manual_profile || d.profile || 'daily').trim();
         if (p) setProfileUI(p, d.conf_thermal && d.conf_thermal.trim() === '1');
     }
     // renderSettings nur wenn echte Daten vorhanden (profile-Key als Indikator)
@@ -1344,7 +1255,7 @@ function renderPerApp() {
                       + '<div class="pa-pkg">' + pkg + '</div>';
         var sel = document.createElement('select');
         sel.className = 'pa-sel';
-        [['competitive','🏆 Competitive'],['gaming','⚡ Gaming'],['balanced','⚖️ Balanced'],['battery','🔋 Battery']].forEach(function(v) {
+        [['cooking','🔥 Cooking'],['daily','⚙️ Daily']].forEach(function(v) {
             var o = new Option(v[1], v[0]);
             if (v[0] === prof) o.selected = true;
             sel.add(o);
@@ -1372,7 +1283,7 @@ function renderPerApp() {
 function addApp() {
     var pkg = prompt('Package-Name:\nz.B. com.example.game');
     if (!pkg || pkg.indexOf('.') < 0) { toast('Ungültiger Name'); return; }
-    paData[pkg.trim()] = 'gaming';
+    paData[pkg.trim()] = 'daily';
     savePerApp();
     renderPerApp();
     toast('App hinzugefügt');

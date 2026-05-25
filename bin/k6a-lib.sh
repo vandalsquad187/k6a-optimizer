@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-lib.sh  v8.0
+# k6a-lib.sh  v2.0
 # Hardware / Scheduler / Network / App-Detection Library
 # Einbinden: . "$MODDIR/bin/k6a-lib.sh"  (POSIX-kompatibel, busybox-sicher)
 #
@@ -9,37 +9,12 @@
 #         THERMAL_WRITABLE_TRIPS=y, LRU_GEN=y, BBR=y, ZRAM=lz4,
 #         BOEFFLA_WL_BLOCKER=y, HTB=y, NETFILTER_MARK=y
 #
-# v8.0 Changes (Major Cleanup):
-#   1. Auto Gaming Detection entfernt (CFG_AUTO, get_foreground_app, is_game_pkg)
-#   2. MIUI-Code entfernt (miui_gpu2d, miui_joyose, smart_pixels, smart_dim)
-#   3. apply_gpu_driver() entfernt (nie aufgerufen)
-#   4. thermal_zone_list() entfernt (Debug-Helfer, nie aufgerufen)
-#   5. CODM_PKG → PRIMARY_GAME_PKG umbenannt
-#  v7.64 Changes:
-#   1. lmh_disable() — LMH/DCVS/PMIC5 Limits deaktivieren (verhindert CPU FROZEN)
-#  v7.63 Changes:
-#   1. cpu_set(): per-CPU Writes entfernt — Gold CPU Freeze Fix (Safe-Guard blockierte min>max)
-#   2. sched_gaming(): uclamp min 20→50, fg min 10→20 — aggressiveres CPU-Pinning
-#   3. sched_competitive(): uclamp min 40→60 — maximale CPU-Priorität
-#   4. settings.conf: cpu_hotplug_enable=1 (default für Competitive)
-#  v7.62 Changes:
-#   1. Adaptive Thermal: competitive 95→90°C, gaming 85→88°C
-#  v7.61 Changes:
-#   1. CFG_WIFI_PS variable fix (war CFG_WIFI_PS_DISABLE)
-#   2. sf_gaming() entfernt (latch_unsignaled=1 → Frame-Drops)
-#   3. Battery Spoof Minimum 25°C (Lithium-Plating-Schutz)
-#  v7.60 Changes:
-#   1. Logging-System: _log/_warn/_err/_dbg mit [TAG] Prefix
-#   2. w() Helper mit Safe-Guards (GPU ≤ 800MHz, CPU min ≤ max)
-#   3. detect_kernel_features() — auto-detect verfügbare sysfs-Pfade
-#   4. CPU Hotplug: Silver-Cores offline im Competitive
-#   5. LRU_GEN Tuning pro Profil
-#   6. Network QoS: TC HTB + iptables MARK für Gaming
-#   7. WakeLock Blocker (BOEFFLA)
-#   8. SurfaceFlinger Tuning (latch_unsignaled, backpressure)
-#   9. IRQ Affinity dynamisch (statt hardcoded Nummern)
-#  10. tune_codm() → tune_game() generisch für alle Games
-#  11. Adaptive Thermal Control pro Profil
+# v2.0 — 2-Mode-Architektur: daily + cooking
+#   Entfernt: battery, gaming, competitive Profile
+#   Entfernt: apply_adaptive_thermal, thermal_zone_list, freeze_for, unfreeze_for
+#   Entfernt: lmk_battery, lru_gen_battery, sched_battery, gpu_battery, io_battery, vm_battery
+#   Entfernt: sched_competitive (merged in sched_cooking), net_competitive (merged in net_cooking)
+#   Merged: lmk_gaming=lmk_balanced → lmk_default, lru_gen_gaming=balanced → lru_gen_enable
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Pfade ─────────────────────────────────────────────────────────────────────
@@ -70,7 +45,6 @@ FEATURE_UCLAMP=0
 FEATURE_THERMAL_WRITABLE=0
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
-# LOG_FILE muss vom Controller gesetzt sein: LOG_FILE="$MODDIR/config/service.log"
 _log()  { printf '[%s] [INFO] %s\n' "$(date '+%H:%M:%S')" "$1" >> "${LOG_FILE:-/dev/null}" 2>/dev/null; }
 _warn() { printf '[%s] [WARN] %s\n' "$(date '+%H:%M:%S')" "$1" >> "${LOG_FILE:-/dev/null}" 2>/dev/null; }
 _err()  { printf '[%s] [ERROR] %s\n' "$(date '+%H:%M:%S')" "$1" >> "${LOG_FILE:-/dev/null}" 2>/dev/null; }
@@ -78,7 +52,6 @@ _dbg()  {
     [ "${CFG_DEBUG:-0}" = "1" ] && \
     printf '[%s] [DBG] %s\n' "$(date '+%H:%M:%S')" "$1" >> "${LOG_FILE:-/dev/null}" 2>/dev/null
 }
-# Aliase für Rückwärtskompatibilität
 log()  { _log "$1"; }
 warn() { _warn "$1"; }
 err()  { _err "$1"; }
@@ -117,13 +90,8 @@ w() {
 # KERNEL FEATURE DETECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 detect_kernel_features() {
-    FEATURE_HOTPLUG=0
-    FEATURE_LRU_GEN=0
-    FEATURE_BOEFFLA=0
-    FEATURE_WAKELOCK=0
-    FEATURE_SCHED_CASS=0
-    FEATURE_UCLAMP=0
-    FEATURE_THERMAL_WRITABLE=0
+    FEATURE_HOTPLUG=0; FEATURE_LRU_GEN=0; FEATURE_BOEFFLA=0
+    FEATURE_WAKELOCK=0; FEATURE_SCHED_CASS=0; FEATURE_UCLAMP=0; FEATURE_THERMAL_WRITABLE=0
 
     [ -f /sys/devices/system/cpu/cpu0/online ] && FEATURE_HOTPLUG=1
     [ -d /sys/kernel/mm/lru_gen ] && FEATURE_LRU_GEN=1
@@ -141,23 +109,22 @@ detect_kernel_features() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # GPU — Adreno 618 (KGSL sysfs)
 # ═══════════════════════════════════════════════════════════════════════════════
-gpu_gaming() {
+gpu_daily() {
     w $GPU/devfreq/governor        "msm-adreno-tz"
-    w $GPU/force_clk_on            "1"
-    w $GPU/force_bus_on            "1"
-    w $GPU/bus_split               "0"
+    w $GPU/force_clk_on            "0"
+    w $GPU/force_bus_on            "0"
+    w $GPU/bus_split               "1"
     w $GPU/thermal_pwrlevel        "0"
     w $GPU/max_pwrlevel            "$GPU_LVL_800"
-    w $GPU/min_pwrlevel            "$GPU_LVL_650"
+    w $GPU/min_pwrlevel            "$GPU_LVL_267"
     w $GPU/devfreq/max_freq        "800000000"
-    w $GPU/devfreq/min_freq        "650000000"
-    w $GPU/devfreq/polling_interval "10"
-    w $GPU/adreno_idler_active     "0"
-    echo "0" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU gaming: 650-800MHz"
+    w $GPU/devfreq/min_freq        "267000000"
+    w $GPU/adreno_idler_active     "1"
+    echo "1" > "$GPU/throttling"   2>/dev/null || true
+    dbg "GPU daily: 267-800MHz idler ON"
 }
 
-gpu_competitive() {
+gpu_cooking() {
     w $GPU/devfreq/governor        "msm-adreno-tz"
     w $GPU/force_clk_on            "1"
     w $GPU/force_bus_on            "1"
@@ -170,36 +137,7 @@ gpu_competitive() {
     w $GPU/devfreq/polling_interval "2"
     w $GPU/adreno_idler_active     "0"
     echo "0" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU competitive: locked 800MHz"
-}
-
-gpu_balanced() {
-    w $GPU/devfreq/governor        "msm-adreno-tz"
-    w $GPU/force_clk_on            "0"
-    w $GPU/force_bus_on            "0"
-    w $GPU/bus_split               "1"
-    w $GPU/thermal_pwrlevel        "0"
-    w $GPU/max_pwrlevel            "$GPU_LVL_800"
-    w $GPU/min_pwrlevel            "$GPU_LVL_267"
-    w $GPU/devfreq/max_freq        "800000000"
-    w $GPU/devfreq/min_freq        "267000000"
-    w $GPU/adreno_idler_active     "1"
-    echo "1" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU balanced: 267-800MHz idler ON"
-}
-
-gpu_battery() {
-    w $GPU/devfreq/governor        "powersave"
-    w $GPU/force_clk_on            "0"
-    w $GPU/force_bus_on            "0"
-    w $GPU/bus_split               "1"
-    w $GPU/thermal_pwrlevel        "2"
-    w $GPU/max_pwrlevel            "4"
-    w $GPU/min_pwrlevel            "$GPU_LVL_267"
-    w $GPU/devfreq/max_freq        "355000000"
-    w $GPU/devfreq/min_freq        "267000000"
-    w $GPU/adreno_idler_active     "1"
-    dbg "GPU battery: powersave 267-355MHz"
+    dbg "GPU cooking: locked 800MHz"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -217,9 +155,7 @@ cpu_set() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CPU HOTPLUG — Silver-Cores offline im Competitive
-# Kernel: CONFIG_HOTPLUG_CPU=y ✓
-# SM7150: CPU 0-3 = Silver (A55), CPU 4-5 = Silver, CPU 6-7 = Gold (A76)
+# CPU HOTPLUG — Silver-Cores offline im Cooking
 # ═══════════════════════════════════════════════════════════════════════════════
 cpu_hotplug_offline_silver() {
     [ "$FEATURE_HOTPLUG" = "0" ] && return 0
@@ -242,9 +178,7 @@ cpu_hotplug_online_all() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# THERMAL TRIP-POINT MANAGER — THERMAL_WRITABLE_TRIPS=y ✓
-# Originale Werte cachen → auf Target-Temp hochsetzen → exakt zurückschreiben
-# zone24/25 (CPU-Sensoren) und BCL/PMIC niemals anfassen
+# THERMAL TRIP-POINT MANAGER
 # ═══════════════════════════════════════════════════════════════════════════════
 thermal_trips_raise() {
     local target_temp="${1:-95000}"
@@ -283,8 +217,7 @@ thermal_trips_restore() {
     dbg "Thermal trips restored from cache"
 }
 
-# ── Thermal Daemon Manager (hier für service.sh Watchdog-Zugriff) ─────────────
-
+# ── Thermal Daemon Manager ─────────────────────────────────────────────────────
 thermal_stop_daemons() {
     [ "$_THERMAL_DAEMONS_STOPPED" = "1" ] && return 0
     local pid svc
@@ -338,14 +271,9 @@ thermal_restore_daemons() {
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LMH (Limits Management Hardware) DEACTIVATE
-# Kernel: CONFIG_QTI_THERMAL_LIMITS_DCVS=y
-# LMH limitiert CPU/GPU Frequenzen basierend auf Stromverbrauch — unabhängig
-# vom thermal-engine. Verursacht CPU FROZEN und FPS-Drops.
 # ═══════════════════════════════════════════════════════════════════════════════
 lmh_disable() {
     local node
-
-    # QTI DCVS (Dynamic Clock and Voltage Scaling) Limits
     for node in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
         [ -f "$node" ] || continue
         local max; max=$(cat "${node%/scaling_max_freq}/scaling_max_freq" 2>/dev/null)
@@ -354,83 +282,40 @@ lmh_disable() {
             [ -n "$policy" ] && w "/sys/devices/system/cpu/cpufreq/${policy}/scaling_max_freq" "2304000"
         }
     done
-
-    # SPMI PMIC5 thermal limits
     for node in /sys/module/spmi_pmic5/parameters/*; do
-        [ -f "$node" ] || continue
-        echo 0 > "$node" 2>/dev/null || true
+        [ -f "$node" ] && echo 0 > "$node" 2>/dev/null || true
     done
-
-    # QTI thermal limits DCVS
     for node in /sys/devices/virtual/thermal/thermal_zone*/user_space; do
         [ -f "$node" ] && echo 0 > "$node" 2>/dev/null || true
     done
-
-    # MSM Performance limits
     for node in /sys/module/msm_performance/parameters/*; do
         [ -f "$node" ] || continue
         case "$(basename "$node")" in
             *limit*|*thermal*|*dcvs*) echo 0 > "$node" 2>/dev/null || true ;;
         esac
     done
-
-    # CPU freq limits reset — max zuerst, dann sleep, dann min
     w "$P0/scaling_max_freq" "1804800"
     w "$P6/scaling_max_freq" "2304000"
     sleep 1
     w "$P0/scaling_min_freq" "576000"
     w "$P6/scaling_min_freq" "652800"
-
     _log "LMH: deaktiviert (DCVS, PMIC5, thermal limits)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ADAPTIVE THERMAL CONTROL — Target-Temp je nach Profil
-# ═══════════════════════════════════════════════════════════════════════════════
-apply_adaptive_thermal() {
-    [ "${CFG_ADAPTIVE_THERMAL:-1}" = "0" ] && return 0
-
-    local profile="$1"
-    local target_temp
-
-    case "$profile" in
-        competitive) target_temp=90000 ;;
-        gaming)      target_temp=88000 ;;
-        balanced)    target_temp=75000 ;;
-        battery)     target_temp=70000 ;;
-        *)           target_temp=80000 ;;
-    esac
-
-    # Nur wenn trips noch nicht für dieses Profil gesetzt
-    if [ ! -f "$_TRIP_CACHE_FILE" ]; then
-        thermal_trips_raise "$target_temp"
-    fi
-
-    _log "Adaptive Thermal: $profile → $(( target_temp / 1000 ))°C"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# IRQ AFFINITY — dynamisch erkannt (statt hardcoded Nummern)
+# IRQ AFFINITY — dynamisch erkannt
 # ═══════════════════════════════════════════════════════════════════════════════
 apply_irq_affinity() {
     stop vendor.msm_irqbalance 2>/dev/null || true
     setprop ctl.stop vendor.msm_irqbalance 2>/dev/null || true
     for pid in $(pgrep -x "msm_irqbalance" 2>/dev/null); do kill -9 "$pid" 2>/dev/null || true; done
     for pid in $(pidof irqbalance 2>/dev/null); do kill -9 "$pid" 2>/dev/null || true; done
-
-    # Touch-IRQ dynamisch erkennen
     local touch_irq
     touch_irq=$(grep -l "GTX9896\|touch\|fts\|novatek" /proc/irq/*/actions 2>/dev/null | head -1 | grep -o '[0-9]\+')
     [ -n "$touch_irq" ] && printf '%s' "40" > /proc/irq/${touch_irq}/smp_affinity 2>/dev/null || true
-
-    # UFS-IRQ dynamisch erkennen
     local ufs_irq
     ufs_irq=$(grep -l "ufshcd\|ufs" /proc/irq/*/actions 2>/dev/null | head -1 | grep -o '[0-9]\+')
     [ -n "$ufs_irq" ] && printf '%s' "02" > /proc/irq/${ufs_irq}/smp_affinity 2>/dev/null || true
-
-    # GPU-IRQ bewusst nicht setzen (PM_QOS_REQ_AFFINE_IRQ)
-
-    # Netzwerk-IRQs dynamisch
     local irq_dir irq_name
     for irq_dir in /proc/irq/*/; do
         [ -f "${irq_dir}smp_affinity" ] || continue
@@ -440,8 +325,6 @@ apply_irq_affinity() {
             printf '%s' "04" > "${irq_dir}smp_affinity" 2>/dev/null || true
         fi
     done
-
-    # RIL-Prozesse auf Silver (0x3f = CPU 0-5)
     if [ "${_RIL_PINNED:-0}" = "0" ]; then
         local p
         for p in $(pidof ipacm netmgrd qcrild 2>/dev/null); do
@@ -449,74 +332,13 @@ apply_irq_affinity() {
         done
         _RIL_PINNED=1
     fi
-
     dbg "IRQ: Touch→cpu4 UFS→cpu1 Netz→cpu2 (dynamisch erkannt)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SCHEDULER — uclamp+EAS aktiv, schedtune ENTFERNT (nie compiled)
+# SCHEDULER — daily + cooking
 # ═══════════════════════════════════════════════════════════════════════════════
-sched_gaming() {
-    echo "0-7" > "$CS_TOP/cpus"      2>/dev/null || true
-    echo "0-7" > "$CS_FG/cpus"       2>/dev/null || true
-    echo "0-5" > "$CS_SYS/cpus"      2>/dev/null || true
-    echo "0-5" > "$CS_BG/cpus"       2>/dev/null || true
-    echo "2-5" > "$CS_RESTRICT/cpus" 2>/dev/null || true
-    w "$CS_TOP/uclamp.min"               "50.00"
-    w "$CS_TOP/uclamp.max"               "100.00"
-    w "$CS_TOP/uclamp.boosted"           "1"
-    w "$CS_TOP/uclamp.latency_sensitive" "1"
-    w "$CS_FG/uclamp.min"                "20.00"
-    w "$CS_FG/uclamp.max"                "100.00"
-    w "$CS_FG/uclamp.boosted"            "1"
-    w "$CS_FG/uclamp.latency_sensitive"  "1"
-    w /proc/sys/kernel/sched_upmigrate        "80"
-    w /proc/sys/kernel/sched_downmigrate      "60"
-    w /proc/sys/kernel/sched_child_runs_first "1"
-    w /proc/sys/kernel/sched_energy_aware     "0"
-    w /proc/sys/kernel/sched_util_clamp_min   "200"
-    w /proc/sys/kernel/sched_util_clamp_max   "1024"
-    # sched_boost=1: CAF-spezifisch, migriert Tasks aggressiver auf Gold
-    w /proc/sys/kernel/sched_boost            "1"
-    # Schedutil rates: instant up, hold 20ms after burst
-    w "$P0/schedutil/up_rate_limit_us"    "500"
-    w "$P0/schedutil/down_rate_limit_us"  "20000"
-    w "$P6/schedutil/up_rate_limit_us"    "500"
-    w "$P6/schedutil/down_rate_limit_us"  "20000"
-    # Input Boost (cpu_boost Modul) — nur wenn vorhanden
-    local IB=/sys/module/cpu_boost/parameters
-    if [ -d "$IB" ]; then
-        w "$IB/input_boost_enabled" "1"
-        printf '%s' "0:1248000 1:1248000 2:1248000 3:1248000 4:1248000 5:1248000 6:1843200 7:1843200" \
-            > "$IB/input_boost_freq" 2>/dev/null || true
-        w "$IB/input_boost_ms" "40"
-        _dbg "Input Boost: enabled (Silver 1248, Gold 1843, 40ms)"
-    fi
-    apply_irq_affinity
-    w /sys/class/power_supply/battery/system_temp_level "0"
-    _log "Sched gaming: EAS=0 uclamp_min=200 upmigrate=80 sched_boost=1 rates=500/20000"
-}
-
-sched_competitive() {
-    sched_gaming
-
-    # Aggressivere uclamp-Werte
-    w "$CS_TOP/uclamp.min"               "60.00"
-    w "$CS_TOP/uclamp.latency_sensitive" "1"
-    w /proc/sys/kernel/sched_upmigrate        "70"
-    w /proc/sys/kernel/sched_downmigrate      "50"
-
-    # CPU Hotplug: Silver offline
-    [ "${CFG_CPU_HOTPLUG:-0}" = "1" ] && cpu_hotplug_offline_silver
-
-    # WiFi Power-Save deaktivieren
-    [ "${CFG_WIFI_PS:-1}" = "1" ] && \
-        iw dev wlan0 set power_save off 2>/dev/null || true
-
-    dbg "Sched competitive: uclamp=40 migrate=70/50 hotplug=${CFG_CPU_HOTPLUG:-0}"
-}
-
-sched_balanced() {
+sched_daily() {
     echo "0-7" > "$CS_TOP/cpus" 2>/dev/null || true
     echo "0-7" > "$CS_FG/cpus"  2>/dev/null || true
     w "$CS_TOP/uclamp.min"               "0.00"
@@ -534,51 +356,56 @@ sched_balanced() {
     w /proc/sys/kernel/sched_util_clamp_min   "128"
     w /proc/sys/kernel/sched_util_clamp_max   "1024"
     w /proc/sys/kernel/sched_boost            "0"
-    # Schedutil rates restored to default
     w "$P0/schedutil/up_rate_limit_us"    "2000"
     w "$P0/schedutil/down_rate_limit_us"  "8000"
     w "$P6/schedutil/up_rate_limit_us"    "2000"
     w "$P6/schedutil/down_rate_limit_us"  "8000"
-    _dbg "Sched balanced: EAS=1 uclamp_min=128 migrate=95/85 rates=2000/8000"
+    _dbg "Sched daily: EAS=1 uclamp_min=128 migrate=95/85 rates=2000/8000"
 }
 
-sched_battery() {
-    echo "0-5" > "$CS_TOP/cpus" 2>/dev/null || true
-    echo "0-5" > "$CS_FG/cpus"  2>/dev/null || true
-    w "$CS_TOP/uclamp.min"               "0.00"
+sched_cooking() {
+    echo "0-7" > "$CS_TOP/cpus"      2>/dev/null || true
+    echo "0-7" > "$CS_FG/cpus"       2>/dev/null || true
+    echo "0-5" > "$CS_SYS/cpus"      2>/dev/null || true
+    echo "0-5" > "$CS_BG/cpus"       2>/dev/null || true
+    echo "2-5" > "$CS_RESTRICT/cpus" 2>/dev/null || true
+    w "$CS_TOP/uclamp.min"               "60.00"
     w "$CS_TOP/uclamp.max"               "100.00"
-    w "$CS_TOP/uclamp.boosted"           "0"
-    w "$CS_TOP/uclamp.latency_sensitive" "0"
-    w /proc/sys/kernel/sched_upmigrate        "98"
-    w /proc/sys/kernel/sched_downmigrate      "90"
-    w /proc/sys/kernel/sched_energy_aware     "1"
-    w /proc/sys/kernel/sched_util_clamp_min   "64"
+    w "$CS_TOP/uclamp.boosted"           "1"
+    w "$CS_TOP/uclamp.latency_sensitive" "1"
+    w "$CS_FG/uclamp.min"                "20.00"
+    w "$CS_FG/uclamp.max"                "100.00"
+    w "$CS_FG/uclamp.boosted"            "1"
+    w "$CS_FG/uclamp.latency_sensitive"  "1"
+    w /proc/sys/kernel/sched_upmigrate        "70"
+    w /proc/sys/kernel/sched_downmigrate      "50"
+    w /proc/sys/kernel/sched_child_runs_first "1"
+    w /proc/sys/kernel/sched_energy_aware     "0"
+    w /proc/sys/kernel/sched_util_clamp_min   "200"
     w /proc/sys/kernel/sched_util_clamp_max   "1024"
-    w /proc/sys/kernel/sched_boost            "0"
-    # Schedutil rates: slow up, slow down (powersave)
-    w "$P0/schedutil/up_rate_limit_us"    "5000"
+    w /proc/sys/kernel/sched_boost            "1"
+    w "$P0/schedutil/up_rate_limit_us"    "500"
     w "$P0/schedutil/down_rate_limit_us"  "20000"
-    w "$P6/schedutil/up_rate_limit_us"    "5000"
+    w "$P6/schedutil/up_rate_limit_us"    "500"
     w "$P6/schedutil/down_rate_limit_us"  "20000"
-    _dbg "Sched battery: EAS=1 uclamp_min=64 migrate=98/90 rates=5000/20000"
+    local IB=/sys/module/cpu_boost/parameters
+    if [ -d "$IB" ]; then
+        w "$IB/input_boost_enabled" "1"
+        printf '%s' "0:1248000 1:1248000 2:1248000 3:1248000 4:1248000 5:1248000 6:1843200 7:1843200" \
+            > "$IB/input_boost_freq" 2>/dev/null || true
+        w "$IB/input_boost_ms" "40"
+        _dbg "Input Boost: enabled (Silver 1248, Gold 1843, 40ms)"
+    fi
+    [ "${CFG_CPU_HOTPLUG:-0}" = "1" ] && cpu_hotplug_offline_silver
+    apply_irq_affinity
+    w /sys/class/power_supply/battery/system_temp_level "0"
+    _log "Sched cooking: EAS=0 uclamp_min=60 upmigrate=70 sched_boost=1 rates=500/20000"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # IO Scheduler
 # ═══════════════════════════════════════════════════════════════════════════════
-io_gaming() {
-    local blk
-    for blk in /sys/block/sd* /sys/block/mmcblk* /sys/block/dm-*; do
-        [ -d "$blk/queue" ] || continue
-        w "$blk/queue/scheduler"     "mq-deadline"
-        w "$blk/queue/read_ahead_kb" "128"
-        w "$blk/queue/nr_requests"   "64"
-        w "$blk/queue/iostats"       "0"
-        w "$blk/queue/add_random"    "0"
-    done
-}
-
-io_balanced() {
+io_daily() {
     local blk
     for blk in /sys/block/sd* /sys/block/mmcblk* /sys/block/dm-*; do
         [ -d "$blk/queue" ] || continue
@@ -590,19 +417,22 @@ io_balanced() {
     done
 }
 
-io_battery() {
+io_cooking() {
     local blk
     for blk in /sys/block/sd* /sys/block/mmcblk* /sys/block/dm-*; do
         [ -d "$blk/queue" ] || continue
         w "$blk/queue/scheduler"     "mq-deadline"
         w "$blk/queue/read_ahead_kb" "128"
-        w "$blk/queue/nr_requests"   "32"
+        w "$blk/queue/nr_requests"   "64"
         w "$blk/queue/iostats"       "0"
         w "$blk/queue/add_random"    "0"
     done
 }
 
-vm_balanced() {
+# ═══════════════════════════════════════════════════════════════════════════════
+# VM / MEMORY
+# ═══════════════════════════════════════════════════════════════════════════════
+vm_daily() {
     w /proc/sys/vm/swappiness             "60"
     w /proc/sys/vm/vfs_cache_pressure     "100"
     w /proc/sys/vm/dirty_ratio            "20"
@@ -610,20 +440,25 @@ vm_balanced() {
     w /proc/sys/vm/extra_free_kbytes      "24576"
 }
 
-vm_battery() {
-    w /proc/sys/vm/swappiness             "80"
-    w /proc/sys/vm/vfs_cache_pressure     "200"
-    w /proc/sys/vm/dirty_ratio            "40"
-    w /proc/sys/vm/dirty_background_ratio "10"
-    w /proc/sys/vm/extra_free_kbytes      "12288"
+vm_cooking() {
+    w /proc/sys/vm/swappiness             "10"
+    w /proc/sys/vm/vfs_cache_pressure     "50"
+    w /proc/sys/vm/dirty_ratio            "10"
+    w /proc/sys/vm/dirty_background_ratio "3"
+    w /proc/sys/vm/dirty_expire_centisecs "100"
+    w /proc/sys/vm/dirty_writeback_centisecs "50"
+    w /proc/sys/vm/extra_free_kbytes      "24576"
+    w /proc/sys/vm/page-cluster           "0"
 }
 
-lmk_gaming()   { w /sys/module/lowmemorykiller/parameters/minfree "18432,23040,27648,32256,55296,80640"; }
-lmk_balanced() { w /sys/module/lowmemorykiller/parameters/minfree "18432,23040,27648,32256,55296,80640"; }
-lmk_battery()  { w /sys/module/lowmemorykiller/parameters/minfree "23040,27648,32256,36864,60416,92160"; }
+lmk_default() { w /sys/module/lowmemorykiller/parameters/minfree "18432,23040,27648,32256,55296,80640"; }
 
-# ── ZRAM — Kernel: CONFIG_ZRAM=y, CONFIG_ZRAM_DEF_COMP_LZ4=y ✓ ────────────────
-zram_gaming() {
+# ── ZRAM ──────────────────────────────────────────────────────────────────────
+zram_daily() {
+    w /proc/sys/vm/page-cluster "0"
+}
+
+zram_cooking() {
     local swap_free swap_total dirty z
     swap_free=$(grep SwapFree  /proc/meminfo | awk '{print $2}')
     swap_total=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
@@ -636,44 +471,17 @@ zram_gaming() {
     _dbg "ZRAM: lz4 forced, page-cluster=0"
 }
 
-zram_balanced() {
-    w /proc/sys/vm/page-cluster "0"
-}
-
-vm_gaming() {
-    w /proc/sys/vm/swappiness             "10"
-    w /proc/sys/vm/vfs_cache_pressure     "50"
-    w /proc/sys/vm/dirty_ratio            "10"
-    w /proc/sys/vm/dirty_background_ratio "3"
-    w /proc/sys/vm/dirty_expire_centisecs "100"
-    w /proc/sys/vm/dirty_writeback_centisecs "50"
-    w /proc/sys/vm/extra_free_kbytes      "24576"
-    w /proc/sys/vm/page-cluster           "0"
-}
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# LRU_GEN Tuning — Kernel: CONFIG_LRU_GEN=y ✓
+# LRU_GEN
 # ═══════════════════════════════════════════════════════════════════════════════
-lru_gen_gaming() {
+lru_gen_enable() {
     [ "$FEATURE_LRU_GEN" = "0" ] && return 0
     echo 1 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null || true
-    dbg "LRU_GEN: gaming (enabled, aggressive reclaim)"
-}
-
-lru_gen_balanced() {
-    [ "$FEATURE_LRU_GEN" = "0" ] && return 0
-    echo 1 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null || true
-    dbg "LRU_GEN: balanced"
-}
-
-lru_gen_battery() {
-    [ "$FEATURE_LRU_GEN" = "0" ] && return 0
-    echo 0 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null || true
-    dbg "LRU_GEN: disabled (battery saving)"
+    dbg "LRU_GEN: enabled"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# NETWORK — BBR Kernel-Default (CONFIG_DEFAULT_BBR=y) ✓
+# NETWORK
 # ═══════════════════════════════════════════════════════════════════════════════
 detect_net_type() {
     local iface
@@ -682,7 +490,7 @@ detect_net_type() {
     _log "NET_TYPE: $NET_TYPE (iface=$iface)"
 }
 
-net_gaming() {
+net_cooking() {
     w /proc/sys/net/ipv4/tcp_congestion_control "bbr"
     w /proc/sys/net/ipv4/tcp_sack               "1"
     w /proc/sys/net/ipv4/tcp_dsack              "1"
@@ -714,12 +522,7 @@ net_gaming() {
     fi
     setprop net.dns1 "1.1.1.1" 2>/dev/null || true
     setprop net.dns2 "8.8.8.8" 2>/dev/null || true
-}
-
-net_competitive() {
-    net_gaming
-    # Zusätzlich: Network QoS wenn aktiviert
-    [ "${CFG_NET_QOS:-0}" = "1" ] && net_qos_gaming
+    [ "${CFG_NET_QOS:-0}" = "1" ] && net_qos_cooking
 }
 
 net_restore() {
@@ -729,44 +532,32 @@ net_restore() {
     for iface in $(ip link show up 2>/dev/null | grep -o "rmnet_data[0-9]*"); do
         tc qdisc del dev "$iface" root 2>/dev/null || true
     done
-    # QoS entfernen
     net_qos_restore 2>/dev/null
     setprop net.dns1 "" 2>/dev/null || true
     setprop net.dns2 "" 2>/dev/null || true
 }
 
-bt_gaming()  { setprop bluetooth.core.le.vendor.power_level "0" 2>/dev/null || true; }
-bt_restore() { setprop bluetooth.core.le.vendor.power_level "1" 2>/dev/null || true; }
+bt_cooking()  { setprop bluetooth.core.le.vendor.power_level "0" 2>/dev/null || true; }
+bt_restore()  { setprop bluetooth.core.le.vendor.power_level "1" 2>/dev/null || true; }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# NETWORK QoS — TC HTB + iptables MARK
-# Kernel: CONFIG_NET_SCH_HTB=y, CONFIG_NETFILTER_XT_MARK=y ✓
+# NETWORK QoS
 # ═══════════════════════════════════════════════════════════════════════════════
-net_qos_gaming() {
-    # Alten QoS entfernen
+net_qos_cooking() {
     net_qos_restore 2>/dev/null
-
-    # IFACE erkennen
     local iface
     iface=$(ip route show default 2>/dev/null | grep -o "dev [^ ]*" | head -1 | cut -d' ' -f2)
     [ -z "$iface" ] && return 0
-
-    # TC HTB: Gaming-Traffic priorisieren
     tc qdisc add dev "$iface" root handle 1: htb default 30 2>/dev/null || true
     tc class add dev "$iface" parent 1: classid 1:1 htb rate 1000mbit ceil 1000mbit 2>/dev/null || true
     tc class add dev "$iface" parent 1:1 classid 1:10 htb rate 800mbit ceil 1000mbit prio 1 2>/dev/null || true
     tc class add dev "$iface" parent 1:1 classid 1:20 htb rate 150mbit ceil 500mbit prio 2 2>/dev/null || true
     tc class add dev "$iface" parent 1:1 classid 1:30 htb rate 50mbit ceil 200mbit prio 3 2>/dev/null || true
-
-    # CoD Ports: UDP 3074, 27000-27100 → Class 1:10 (höchste Prio)
     tc filter add dev "$iface" parent 1: protocol ip u32 match ip dport 3074 0xffff flowid 1:10 2>/dev/null || true
     tc filter add dev "$iface" parent 1: protocol ip u32 match ip sport 3074 0xffff flowid 1:10 2>/dev/null || true
     tc filter add dev "$iface" parent 1: protocol ip u32 match ip dport 27000 0xf800 flowid 1:10 2>/dev/null || true
-
-    # DNS → Class 1:20
     tc filter add dev "$iface" parent 1: protocol ip u32 match ip dport 53 0xffff flowid 1:20 2>/dev/null || true
     tc filter add dev "$iface" parent 1: protocol ip u32 match ip sport 53 0xffff flowid 1:20 2>/dev/null || true
-
     _log "NET QoS: TC HTB aktiv auf $iface (CoD prio 1)"
 }
 
@@ -779,9 +570,9 @@ net_qos_restore() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WAKELOCK BLOCKER — Kernel: CONFIG_BOEFFLA_WL_BLOCKER=y ✓
+# WAKELOCK BLOCKER
 # ═══════════════════════════════════════════════════════════════════════════════
-wakelock_block_gaming() {
+wakelock_block() {
     [ "$FEATURE_BOEFFLA" = "0" ] && return 0
     local blockers="*PowerManagerService* *NfcService* *GMS* *SyncLoop*"
     for wl in $blockers; do
@@ -798,9 +589,8 @@ wakelock_restore() {
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SURFACEFLINGER TUNING
-# latch_unsignaled=1 auf CAF-AOSP ohne QC-Patches → Frame-Drops (v7.45 FIX)
 # ═══════════════════════════════════════════════════════════════════════════════
-sf_balanced() {
+sf_daily() {
     setprop debug.sf.latch_unsignaled 0 2>/dev/null || true
     setprop debug.sf.disable_backpressure 0 2>/dev/null || true
     _log "SF: default"
@@ -833,9 +623,9 @@ restore_battery_spoof() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# THREAD PINNING — generisch für alle Games
+# THREAD PINNING
 # ═══════════════════════════════════════════════════════════════════════════════
-tune_game() {
+tune_cooking() {
     [ "${CFG_THREAD_PIN:-1}" = "0" ] && return 0
     local pkg="$1"
     [ -z "$pkg" ] && return 0
@@ -856,7 +646,6 @@ tune_game() {
         esac
     done
 
-    # audioserver auf Silver
     local ap; ap=$(pidof audioserver 2>/dev/null | awk '{print $1}')
     [ -n "$ap" ] && taskset -p 0x3f "$ap" >/dev/null 2>&1
 
@@ -866,19 +655,6 @@ tune_game() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # FREEZE ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
-FREEZE_WHITELIST="android|systemui|phone|gms|telephony|launcher|com.miui|com.xiaomi"
-
-freeze_for() {
-    local pkg="$1" pid
-    echo "$pkg" | grep -Eqi "$FREEZE_WHITELIST" && { _warn "Freeze blocked: $pkg"; return 0; }
-    for pid in $(pidof "$pkg" 2>/dev/null); do kill -SIGSTOP "$pid" 2>/dev/null || true; done
-}
-
-unfreeze_for() {
-    local pkg="$1" pid
-    for pid in $(pidof "$pkg" 2>/dev/null); do kill -SIGCONT "$pid" 2>/dev/null || true; done
-}
-
 unfreeze_all() {
     local pkg pid
     while IFS='=' read -r pkg _; do
@@ -903,17 +679,4 @@ clean_ram() {
     _log "RAM: cleaning"
     echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || true
     _log "RAM: done"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# THERMAL ZONE LIST — Debug-Helfer
-# ═══════════════════════════════════════════════════════════════════════════════
-thermal_zone_list() {
-    local zone type temp
-    for zone in /sys/devices/virtual/thermal/thermal_zone*/; do
-        [ -d "$zone" ] || continue
-        type=$(cat "${zone}type" 2>/dev/null || echo "?")
-        temp=$(cat "${zone}temp" 2>/dev/null || echo "?")
-        _log "Thermal: ${zone##*/} type=$type temp=$(( ${temp:-0} / 1000 ))°C"
-    done
 }
