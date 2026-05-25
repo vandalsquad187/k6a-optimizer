@@ -6,8 +6,11 @@ on:
       - main
     paths:
       - 'k6a-daemon/**'
-      - 'module/**'
       - '.github/workflows/build.yml'
+      - 'customize.sh'
+      - 'service.sh'
+      - 'bin/k6a-controller'
+      - 'bin/k6a-lib.sh'
   pull_request:
     branches:
       - main
@@ -67,7 +70,7 @@ jobs:
         run: |
           BINARY="k6a-daemon/target/aarch64-linux-android/release/k6a-daemon"
           STAGING="/tmp/staging"
-          OUT="/tmp/BadazZ89_k6a_Optimizer_v3.10.zip"
+          OUT="/tmp/BadazZ89_k6a_Optimizer_v1.0.zip"
 
           mkdir -p "$STAGING/bin"
           mkdir -p "$STAGING/webroot"
@@ -76,51 +79,35 @@ jobs:
           mkdir -p "$STAGING/icon"
           mkdir -p "$STAGING/META-INF/com/google/android"
 
-          cp module/module.prop    "$STAGING/module.prop"
-          cp module/service.sh     "$STAGING/service.sh"
-          cp module/system.prop    "$STAGING/system.prop"
-          cp module/index.html     "$STAGING/webroot/index.html"
-          cp "$BINARY"             "$STAGING/bin/k6a-daemon"
-          chmod 755                "$STAGING/bin/k6a-daemon"
+          # Module metadata
+          cp module.prop       "$STAGING/module.prop"
+          cp customize.sh      "$STAGING/customize.sh"
+          cp service.sh        "$STAGING/service.sh"
+          cp system.prop       "$STAGING/system.prop"
+          cp post-fs-data.sh   "$STAGING/post-fs-data.sh"
+          cp boot-completed.sh "$STAGING/boot-completed.sh"
 
-          cat > "$STAGING/customize.sh" << 'CEOF'
-          #!/system/bin/sh
-          SKIPUNZIP=1
-          ui_print "BadazZ89 k6a Optimizer v3.10"
-          ui_print "SD730 / sweet2"
-          unzip -o "$ZIPFILE" -d "$MODPATH"
-          set_perm "$MODPATH/service.sh"        root root 0755
-          set_perm "$MODPATH/bin/k6a-daemon"    root root 0755
-          set_perm "$MODPATH/boot-completed.sh" root root 0755
-          mkdir -p "$MODPATH/run"
-          mkdir -p "$MODPATH/config"
-          CEOF
+          # Config
+          cp config/settings.conf  "$STAGING/config/settings.conf"
+          cp config/freeze.conf    "$STAGING/config/freeze.conf"
+          cp config/manual_profile "$STAGING/config/manual_profile"
 
-          cat > "$STAGING/post-fs-data.sh" << 'PEOF'
-          #!/system/bin/sh
-          MODDIR=${0%/*}
-          mkdir -p "$MODDIR/run"
-          mkdir -p "$MODDIR/config"
-          PEOF
+          # Binaries
+          cp bin/k6a-controller  "$STAGING/bin/k6a-controller"
+          cp bin/k6a-lib.sh      "$STAGING/bin/k6a-lib.sh"
+          cp bin/k6a-diagnose.sh "$STAGING/bin/k6a-diagnose.sh"
+          cp "$BINARY"           "$STAGING/bin/k6a-daemon"
+          chmod 755              "$STAGING/bin/k6a-daemon"
+          chmod 755              "$STAGING/bin/k6a-controller"
 
-          cat > "$STAGING/boot-completed.sh" << 'BEOF'
-          #!/system/bin/sh
-          MODDIR=${0%/*}
-          DAEMON="$MODDIR/bin/k6a-daemon"
-          PIDFILE="$MODDIR/run/daemon.pid"
-          LOG="$MODDIR/config/daemon.log"
-          mkdir -p "$MODDIR/run"
-          if [ -f "$PIDFILE" ]; then
-              OLD=$(cat "$PIDFILE" 2>/dev/null)
-              [ -n "$OLD" ] && kill "$OLD" 2>/dev/null
-              rm -f "$PIDFILE"
-          fi
-          if [ -x "$DAEMON" ]; then
-              "$DAEMON" >> "$LOG" 2>&1 &
-              echo $! > "$PIDFILE"
-          fi
-          BEOF
+          # Webroot
+          cp webroot/index.html "$STAGING/webroot/index.html"
+          cp webroot/ascii.txt  "$STAGING/webroot/ascii.txt"
 
+          # Icon
+          [ -f icon/icon.png ] && cp icon/icon.png "$STAGING/icon/icon.png"
+
+          # META-INF
           echo "#MAGISK" > "$STAGING/META-INF/com/google/android/updater-script"
 
           cd "$STAGING"
@@ -130,6 +117,6 @@ jobs:
       - name: Upload flashable zip
         uses: actions/upload-artifact@v4
         with:
-          name: BadazZ89-k6a-Optimizer-v3.10
-          path: /tmp/BadazZ89_k6a_Optimizer_v3.10.zip
+          name: BadazZ89-k6a-Optimizer-v1.0
+          path: /tmp/BadazZ89_k6a_Optimizer_v1.0.zip
           retention-days: 30

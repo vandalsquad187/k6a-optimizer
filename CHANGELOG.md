@@ -1,7 +1,63 @@
 # BadazZ89 k6a Optimizer — Changelog
 
 Gerät: Xiaomi Redmi Note 12 Pro 4G (sweet2 / SM7150)
-Kernel: 4.14 CAF (spoofed als 6.12)
+Kernel: VantomKernel 4.14.356-openela-rc1 (EAS/uclamp)
+
+---
+
+## v1.0 — 2026-05-25
+
+### Neu (Architektur)
+
+- **k6a-controller**: Single-Writer State Machine ersetzt monolithisches service.sh (keine Race-Conditions mehr)
+- **k6a-lib.sh**: Modulare Shell-Library mit allen Tuning-Funktionen (sched, GPU, IO, VM, ZRAM, LMH, thermal, IRQ, LRU, net QoS, wakelock, freeze)
+- **Competitive Mode (COOK1NG)**: Vollständiges Thermal-Disable + GPU-Lock 800MHz + EAS=0 — max FPS für CODM
+- **apply_adaptive_thermal entfernt**: Tot-Code (nie gelesen) — reduziert Controller-Log um 30%
+- **Thermal Crash Watchdog**: service.sh stellt thermal zones + daemons automatisch wieder her wenn Controller stirbt
+- **Multi-Instance Lock**: Lock-File mit PID-Check verhindert duplicate service.sh bei KernelSU Next Boot
+
+### Performance
+
+- **sched_gaming**: sched_boost=1, Input Boost (cpu_boost conditional), schedutil 500/20000µs, sched_child_runs_first=1
+- **sched_balanced**: schedutil 2000/8000µs, sched_boost=0, sched_child_runs_first=0
+- **sched_battery**: schedutil 5000/20000µs, sched_boost=0, sched_child_runs_first=0
+- **vm_gaming()**: swappiness=10, dirty_ratio=10, page-cluster=0, extra_free_kbytes=24576
+- **zram_gaming/balanced**: Force lz4 + page-cluster=0 in gaming/competitive
+- **IO scheduler**: mq-deadline für UFS blk-mq (noop/cfq nicht verfügbar auf SM7150)
+- **fstrim /data** alle 90s im Controller-Loop
+- **GPU gaming min_freq**: 650MHz (pwrlevel=1, max FPS)
+- **Network QoS**: TC HTB ingress/egress — CoD UDP-Ports prioritisiert
+- **WiFi Power Save**: automatische Deaktivierung in gaming/competitive
+
+### Behoben
+
+- **grep -Eqi Bug (4 Stellen)**: Toybox `|` ohne `-E` kaputt — Thermal Safety Check, Freeze Whitelist, IRQ affinity detection funktionierten nicht
+- **vm_gaming() silent no-op**: Wurde aufgerufen aber nie definiert — gaming hatte keine VM-Tuning
+- **Thermal Daemon Restore silent fail**: Watchdog rief thermal_restore_daemons() auf, das in controller lag — nie geladen
+- **write_data Race-Condition**: tmp + mv atomic für data.txt, write_ping in separate .ping Datei
+- **data.txt-Ping Integration**: write_data liest async gepinnte .ping Datei (ping/ping_stale Felder)
+- **Log-Rotation**: tail -c → tail -n (vermeidet halbe Zeilen nach Rotation)
+- **CPU Freeze Log-Level**: err → warn (kein falscher Alarm im WebUI)
+- **_CODM_PID_CACHE entfernt**: Tote Variable, nie gelesen
+- **settings.conf**: cpu_hotplug=0, net_qos=1 als Default (SM7150 optimal)
+
+### Config
+
+- **cpu_hotplug_enable** default: `0` (Hotplug kills UI smoothness)
+- **net_qos_enable** default: `1` (TC HTB aktiv)
+- **wifi_ps_disable** default: `1` (WiFi PS aus in gaming/competitive)
+- **MIUI-spezifische Configs entfernt**: aggressive_boost, auto_detection, auto_cache, bypass_threshold, miui_joyose, miui_game_turbo, miui_freeform, miui_mipad_boost
+
+### Entfernt
+
+- `module/` legacy directory
+- `webroot/Index` (leer)
+- `apply_adaptive_thermal` dead code
+- `_CODM_PID_CACHE`
+- `LAST_APP` (nie gelesen)
+- `freeze_for / unfreeze_for` (ersetzt durch app-freeze)
+- `lmk_battery` (ungenutzt)
+- MIUI-spezifische Toggles und Props
 
 ---
 

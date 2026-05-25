@@ -1,0 +1,31 @@
+# Backup files
+*.bak
+
+# Runtime data — config/
+config/service.log
+config/service.log.old
+config/daemon.log
+config/active_profile
+config/cache_kb.tmp
+config/ping.txt
+config/service_start.log
+
+# Runtime data — run/
+run/*
+!run/.gitkeep
+
+# WebUI runtime files
+webroot/data.txt
+webroot/devflags.txt
+webroot/freeze_dump.txt
+webroot/ascii.txt
+webroot/test.txt
+
+# IDE
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
