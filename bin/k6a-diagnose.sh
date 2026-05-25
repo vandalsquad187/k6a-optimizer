@@ -177,6 +177,17 @@ echo ""
 echo "  sched_upmigrate=$upmigrate sched_downmigrate=$downmigrate"
 echo "  sched_energy_aware=$eas sched_util_clamp_min=$uclamp_global"
 echo ""
+echo "  SCHEDUTIL custom:"
+for p in 0 6; do
+    hispeed_load=$(cat /sys/devices/system/cpu/cpufreq/policy${p}/schedutil/hispeed_load 2>/dev/null || echo "N/A")
+    hispeed_freq=$(cat /sys/devices/system/cpu/cpufreq/policy${p}/schedutil/hispeed_freq 2>/dev/null || echo "N/A")
+    pl=$(cat /sys/devices/system/cpu/cpufreq/policy${p}/schedutil/pl 2>/dev/null || echo "N/A")
+    up=$(cat /sys/devices/system/cpu/cpufreq/policy${p}/schedutil/up_rate_limit_us 2>/dev/null || echo "N/A")
+    down=$(cat /sys/devices/system/cpu/cpufreq/policy${p}/schedutil/down_rate_limit_us 2>/dev/null || echo "N/A")
+    pol="Silver"; [ "$p" = "6" ] && pol="Gold"
+    echo "  policy${p} (${pol}): hispeed_load=${hispeed_load} hispeed_freq=${hispeed_freq} pl=${pl} up=${up}µs down=${down}µs"
+done
+echo ""
 
 # ── WIFI POWER SAVE ──────────────────────────────────────────────────────────
 echo "[ WIFI POWER SAVE ]"
@@ -232,8 +243,15 @@ dirty=$(cat /proc/sys/vm/dirty_ratio 2>/dev/null || echo "N/A")
 extra=$(cat /proc/sys/vm/extra_free_kbytes 2>/dev/null || echo "N/A")
 lmk=$(cat /sys/module/lowmemorykiller/parameters/minfree 2>/dev/null || echo "N/A")
 
+dirty_expire=$(cat /proc/sys/vm/dirty_expire_centisecs 2>/dev/null || echo "N/A")
+dirty_writeback=$(cat /proc/sys/vm/dirty_writeback_centisecs 2>/dev/null || echo "N/A")
+watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null || echo "N/A")
+min_free=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null || echo "N/A")
+
 echo "  swappiness=$swappiness vfs_cache_pressure=$vfs"
 echo "  dirty_ratio=$dirty extra_free_kbytes=$extra"
+echo "  dirty_expire_centisecs=$dirty_expire dirty_writeback_centisecs=$dirty_writeback"
+echo "  watermark_scale_factor=$watermark min_free_kbytes=$min_free"
 echo "  LMK minfree=$lmk"
 
 ram_total=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')

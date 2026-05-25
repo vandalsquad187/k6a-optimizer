@@ -366,7 +366,13 @@ sched_daily() {
     w "$P0/schedutil/down_rate_limit_us"  "8000"
     w "$P6/schedutil/up_rate_limit_us"    "2000"
     w "$P6/schedutil/down_rate_limit_us"  "8000"
-    _dbg "Sched daily: EAS=1 uclamp_min=128 migrate=95/85 rates=2000/8000"
+    w "$P0/schedutil/hispeed_load"    "90"
+    w "$P0/schedutil/hispeed_freq"    "0"
+    w "$P6/schedutil/hispeed_load"    "90"
+    w "$P6/schedutil/hispeed_freq"    "0"
+    w "$P0/schedutil/pl"              "0"
+    w "$P6/schedutil/pl"              "0"
+    _dbg "Sched daily: EAS=1 uclamp_min=128 migrate=95/85 rates=2000/8000 pl=0 hispeed=90/0"
 }
 
 sched_cooking() {
@@ -390,6 +396,12 @@ sched_cooking() {
     w /proc/sys/kernel/sched_util_clamp_min   "200"
     w /proc/sys/kernel/sched_util_clamp_max   "1024"
     w /proc/sys/kernel/sched_boost            "1"
+    w "$P0/schedutil/hispeed_load"    "50"
+    w "$P0/schedutil/hispeed_freq"    "1804800"
+    w "$P6/schedutil/hispeed_load"    "50"
+    w "$P6/schedutil/hispeed_freq"    "2304000"
+    w "$P0/schedutil/pl"              "1"
+    w "$P6/schedutil/pl"              "1"
     w "$P0/schedutil/up_rate_limit_us"    "500"
     w "$P0/schedutil/down_rate_limit_us"  "20000"
     w "$P6/schedutil/up_rate_limit_us"    "500"
@@ -405,7 +417,7 @@ sched_cooking() {
     [ "${CFG_CPU_HOTPLUG:-0}" = "1" ] && cpu_hotplug_offline_silver
     apply_irq_affinity
     w /sys/class/power_supply/battery/system_temp_level "0"
-    _log "Sched cooking: EAS=0 uclamp_min=60 upmigrate=70 sched_boost=1 rates=500/20000"
+    _log "Sched cooking: EAS=0 uclamp_min=60 upmigrate=70 sched_boost=1 pl=1 hispeed=50/1804M(2304M) rates=500/20000"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -443,7 +455,11 @@ vm_daily() {
     w /proc/sys/vm/vfs_cache_pressure     "100"
     w /proc/sys/vm/dirty_ratio            "20"
     w /proc/sys/vm/dirty_background_ratio "5"
+    w /proc/sys/vm/dirty_expire_centisecs "3000"
+    w /proc/sys/vm/dirty_writeback_centisecs "500"
     w /proc/sys/vm/extra_free_kbytes      "24576"
+    w /proc/sys/vm/watermark_scale_factor  "10"
+    w /proc/sys/vm/min_free_kbytes         "11065"
 }
 
 vm_cooking() {
@@ -454,6 +470,8 @@ vm_cooking() {
     w /proc/sys/vm/dirty_expire_centisecs "100"
     w /proc/sys/vm/dirty_writeback_centisecs "50"
     w /proc/sys/vm/extra_free_kbytes      "24576"
+    w /proc/sys/vm/watermark_scale_factor  "30"
+    w /proc/sys/vm/min_free_kbytes         "24576"
     w /proc/sys/vm/page-cluster           "0"
 }
 
