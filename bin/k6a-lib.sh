@@ -600,16 +600,12 @@ sf_daily() {
 # BATTERY SPOOF
 # ═══════════════════════════════════════════════════════════════════════════════
 spoof_battery() {
-    [ "${CFG_SPOOF_EN:-0}" = "1" ] || return 0
-    local c=${CFG_SPOOF_T:-15} raw
-    raw=$(( c * 10 ))
-    [ "$raw" -lt 250 ] && { _warn "Battery spoof ABORTED: ${c}°C < 25°C (lithium plating risk)"; return 1; }
-    [ "$raw" -gt 600 ] && { _warn "Battery spoof ABORTED: ${c}°C > 60°C"; return 1; }
+    local raw=250
     for node in /sys/class/power_supply/battery/temp /sys/class/power_supply/bms/temp; do
         [ -f "$node" ] && printf '%s\n' "$raw" > "$node" 2>/dev/null
     done
     cmd thermalservice override-status 0 2>/dev/null || true
-    _log "Battery spoof: ${c}°C (raw ${raw})"
+    _log "Battery spoof: 25°C (raw ${raw})"
 }
 
 restore_battery_spoof() {

@@ -43,27 +43,10 @@ if [ ! -f "$CONF" ]; then
 # ═══════════════════════════════════════════════════════════════════════════════
 # k6a Optimizer v9.0 — settings.conf (2-Mode: daily + cooking)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# Thermal
-thermal_disable=0
-thermal_prediction_enable=1
-
-# Battery
-battery_spoof_enable=0
-battery_spoof_temp=25
-
-# Performance
-thread_pin_enable=1
-cpu_hotplug_enable=0
-lru_gen_enable=1
-
-# Network
-net_qos_enable=1
-wifi_ps_disable=1
-
-# System
+# cpu_hotplug_enable: 0=all cores | 1=Silver offline in cooking
 boot_delay=8
 debug=0
+cpu_hotplug_enable=0
 CONF_EOF
 else
     ui_print "> settings.conf exists — keeping your settings"

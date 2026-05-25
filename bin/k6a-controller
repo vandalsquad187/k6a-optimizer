@@ -56,16 +56,7 @@ GOLD_MAX_NORMAL="2304000"; GOLD_MAX_CAP="2169600"; _THERMAL_PREDICT_RECOVER=80
 cfg()  { grep "^${1}=" "$CONFIG" 2>/dev/null | cut -d= -f2; }
 
 _cfg_load_cache() {
-    CFG_THERMAL=$(cfg thermal_disable);              CFG_THERMAL=${CFG_THERMAL:-0}
-    CFG_SPOOF_EN=$(cfg battery_spoof_enable);        CFG_SPOOF_EN=${CFG_SPOOF_EN:-0}
-    CFG_SPOOF_T=$(cfg battery_spoof_temp);           CFG_SPOOF_T=${CFG_SPOOF_T:-25}
-    CFG_THERM_PRED=$(cfg thermal_prediction_enable); CFG_THERM_PRED=${CFG_THERM_PRED:-1}
-    CFG_THREAD_PIN=$(cfg thread_pin_enable);         CFG_THREAD_PIN=${CFG_THREAD_PIN:-1}
-    CFG_BOOT_DELAY=$(cfg boot_delay);                CFG_BOOT_DELAY=${CFG_BOOT_DELAY:-8}
-    CFG_CPU_HOTPLUG=$(cfg cpu_hotplug_enable);       CFG_CPU_HOTPLUG=${CFG_CPU_HOTPLUG:-1}
-    CFG_NET_QOS=$(cfg net_qos_enable);               CFG_NET_QOS=${CFG_NET_QOS:-1}
-    CFG_WIFI_PS=$(cfg wifi_ps_disable);              CFG_WIFI_PS=${CFG_WIFI_PS:-1}
-    CFG_LRU_GEN=$(cfg lru_gen_enable);               CFG_LRU_GEN=${CFG_LRU_GEN:-1}
+    CFG_CPU_HOTPLUG=$(cfg cpu_hotplug_enable);  CFG_CPU_HOTPLUG=${CFG_CPU_HOTPLUG:-0}
     DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
     CFG_DEBUG=$DEBUG
 }
@@ -120,7 +111,6 @@ thermal_cpu_temp() {
 
 thermal_predict_check() {
     [ "$STATE" = "COOKING" ] || return 0
-    [ "$CFG_THERM_PRED" = "0" ] && return 0
     local curr rate predict_thresh
     curr=$(thermal_cpu_temp)
     predict_thresh=$THERMAL_PREDICT_TEMP
@@ -183,14 +173,8 @@ write_data() {
     freeze_str=""
     [ -f "$FREEZE" ] && freeze_str=$(grep -v "^#" "$FREEZE" 2>/dev/null | grep -v "^$" | tr '\n' '|' | sed 's/|$//' || echo "")
 
-    local c_thermal c_spoof_en c_spoof_t c_therm_pred
-    local c_thread_pin c_boot_delay c_debug
-    local c_cpu_hotplug c_net_qos c_wifi_ps c_lru_gen
+    local c_cpu_hotplug=${CFG_CPU_HOTPLUG:-0}
     local _ping_val _ping_stale
-    c_cpu_hotplug=${CFG_CPU_HOTPLUG:-1}
-    c_net_qos=${CFG_NET_QOS:-1}
-    c_wifi_ps=${CFG_WIFI_PS:-1}
-    c_lru_gen=${CFG_LRU_GEN:-1}
 
     _ping_val="\u2014"; _ping_stale="1"
     [ -f "${DATA}.ping" ] && _ping_val=$(cat "${DATA}.ping" 2>/dev/null) && _ping_stale="0"
@@ -218,17 +202,7 @@ cache_kb=${cache_gb}
 last_clean=${last_clean}
 pause=${pause_val}
 freeze=${freeze_str}
-conf_thermal=${c_thermal}
-conf_spoof_enable=${c_spoof_en}
-conf_spoof_temp=${c_spoof_t}
-conf_thermal_pred=${c_therm_pred}
-conf_thread_pin=${c_thread_pin}
-conf_boot_delay=${c_boot_delay}
-conf_debug=${c_debug}
 conf_cpu_hotplug=${c_cpu_hotplug}
-conf_net_qos=${c_net_qos}
-conf_wifi_ps=${c_wifi_ps}
-conf_lru_gen=${c_lru_gen}
 ping=${_ping_val}
 ping_stale=${_ping_stale}
 tick=${TICK}
@@ -482,8 +456,8 @@ while true; do
     TICK=$(( TICK + 1 ))
     [ $(( TICK % 3 )) -eq 0 ] && write_data
     [ "$STATE" != "COOKING" ] && [ $(( TICK % 10 )) -eq 0 ] && write_ping &
-    [ $(( TICK % 10 )) -eq 0 ] && [ "${CFG_WIFI_PS:-1}" = "1" ] && [ "$STATE" = "COOKING" ] && \
-        { case "$(iw dev wlan0 get power_save 2>/dev/null)" in *on*) iw dev wlan0 set power_save off 2>/dev/null || true ;; esac; }
+    [ $(( TICK % 10 )) -eq 0 ] && [ "$STATE" = "COOKING" ] && \
+        iw dev wlan0 set power_save off 2>/dev/null || true
     [ $(( TICK % 30 )) -eq 0 ] && fstrim /data 2>/dev/null || true
     [ $(( TICK % 200 )) -eq 0 ] && log "\u2665 $STATE tick=$TICK temp=$(thermal_cpu_temp)\u00b0C"
     [ $(( TICK % 1000 )) -eq 0 ] && trim_log

@@ -91,27 +91,7 @@ background-image: radial-gradient(
 #pc-daily    .pc-name { color:#ff9800; }
 #pc-cooking  .pc-name { color:#ff1744; }
 
-.tog-list { display:flex; flex-direction:column; gap:2px; }
-.tog-row { background:var(--card); border:1px solid var(--border); border-left:2px solid rgba(229,57,53,.25); border-radius:10px; padding:13px 14px; display:flex; align-items:center; gap:12px; }
-.tog-ico  { font-size:18px; flex-shrink:0; width:24px; text-align:center; }
-.tog-info { flex:1; }
-.tog-name { font-size:13px; font-weight:600; }
-.tog-desc { font-family:monospace; font-size:9px; color:var(--muted); margin-top:2px; }
-.warn { font-family:monospace; font-size:9px; color:var(--red); margin-top:3px; display:none; }
-.warn.on { display:block; }
 
-.sw { position:relative; width:44px; height:24px; flex-shrink:0; cursor:pointer; }
-.sw input { opacity:0; position:absolute; width:0; height:0; }
-.sw-t { position:absolute; inset:0; background:var(--border); border-radius:24px; transition:.2s; }
-.sw-t::after { content:''; position:absolute; top:3px; left:3px; width:18px; height:18px; background:var(--muted); border-radius:50%; transition:.2s; }
-.sw input:checked ~ .sw-t                   { background:rgba(229,57,53,.2); border:1px solid var(--accent); }
-.sw input:checked ~ .sw-t::after            { transform:translateX(20px); background:var(--accent); }
-.sw.g input:checked ~ .sw-t                 { background:rgba(0,230,118,.2); border-color:var(--green); }
-.sw.g input:checked ~ .sw-t::after          { background:var(--green); }
-.sw.r input:checked ~ .sw-t                 { background:rgba(255,23,68,.2); border-color:var(--red); }
-.sw.r input:checked ~ .sw-t::after          { background:var(--red); }
-.sw.y input:checked ~ .sw-t                 { background:rgba(255,214,0,.15); border-color:var(--yellow); }
-.sw.y input:checked ~ .sw-t::after          { background:var(--yellow); }
 
 .pa-item { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 14px; display:flex; align-items:center; gap:10px; margin-bottom:2px; }
 .pa-name { font-size:13px; font-weight:600; flex:1; }
@@ -142,17 +122,8 @@ background-image: radial-gradient(
 
 .log-box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-family:monospace; font-size:11px; line-height:1.8; max-height:200px; overflow-y:auto; color:var(--muted); }
 
-/* ── Settings Box ──────────────────────────────────────────────────────── */
-.settings-box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-family:monospace; font-size:10px; line-height:1.7; max-height:220px; overflow-y:auto; }
+/* ── ASCII Box ─────────────────────────────────────────────────────────── */
 .ascii-box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-family:monospace; font-size:9px; line-height:1.5; color:var(--accent); white-space:pre; overflow:hidden; text-align:center; flex:1; }
-.s-row  { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid rgba(255,255,255,.03); }
-.s-row:last-child { border-bottom:none; }
-.s-key  { color:var(--muted); font-size:9px; letter-spacing:.5px; }
-.s-val  { font-weight:700; font-size:10px; }
-.s-val.on   { color:var(--green); }
-.s-val.off  { color:var(--muted); }
-.s-val.num  { color:var(--yellow); }
-.s-val.warn { color:var(--accent); }
 .lo { color:var(--green);  }
 .lw { color:var(--yellow); }
 .le { color:var(--red);    }
@@ -356,10 +327,7 @@ background-image: radial-gradient(
           <div class="system-col-label">>4CTIVE TW3AKS</div>
           <div class="log-box" id="tweaks-box" style="max-height:140px;line-height:1.9;">Wird geladen…</div>
         </div>
-        <div>
-          <div class="system-col-label">>S3TTINGS</div>
-          <div class="settings-box" id="settings-box">Wird geladen…</div>
-        </div>
+
         <!-- Control Kachel: 2x2 Buttons + Cache/RAM + Status -->
         <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
@@ -400,123 +368,6 @@ background-image: radial-gradient(
           </div>
         </div>
       </div>
-    </div>
-  </div>
-  <!-- Toggles unified -->
-  <div class="section">
-    <div class="sec-title">>T∅GGLES:</div>
-    <div class="tog-list">
-
-      <!-- Thermal Disabler -->
-      <div class="tog-row">
-        <div class="tog-ico">🏴‍☠️</div>
-        <div class="tog-info">
-          <div class="tog-name">Thermal Disabler</div>
-          <div class="tog-desc">Deactiviate CPU/GPU-Zones in Gaming — Sicherheitszonen keep active</div>
-          <div class="warn on">⚠ Needed for Ranked Mode</div>
-        </div>
-        <label class="sw r">
-          <input type="checkbox" id="tog-thermal"
-window._togTs=window._togTs||{};
-window._togTs["conf_thermal"]=Date.now();
-            onchange="saveConf('thermal_disable',this.checked?'1':'0');
-                      toast(this.checked?'🌡 Thermal Disabler ON':'🌡 Thermal Disabler OFF')">
-          <span class="sw-t"></span>
-        </label>
-      </div>
-
-      <!-- Battery Spoofing -->
-      <div class="tog-row" id="spoof-row" style="flex-direction:column;align-items:stretch;gap:8px;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div class="tog-ico">❄️</div>
-          <div class="tog-info">
-            <div class="tog-name">Battery Spoofing</div>
-            <div class="tog-desc">signal low Akkutemp. to thermal-engine — prevent conn_therm HW-Interrupt (only Gaming)</div>
-          </div>
-          <label class="sw" style="flex-shrink:0">
-            <input type="checkbox" id="tog-spoof"
-              onchange="toggleSpoof(this.checked)">
-            <span class="sw-t"></span>
-          </label>
-        </div>
-        <div id="spoof-slider-wrap" style="display:none;padding:0 4px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <span style="font-family:monospace;font-size:10px;color:var(--muted);">Spoof-Temperature</span>
-            <span style="font-family:monospace;font-size:12px;color:var(--cyan);" id="spoof-val-label">25°C</span>
-          </div>
-          <input type="range" id="spoof-slider" min="25" max="40" value="25" step="1"
-            style="width:100%"
-            oninput="document.getElementById('spoof-val-label').textContent=this.value+'°C';"
-            onchange="saveConf('battery_spoof_temp',this.value);toast('🧊 Spoof: '+this.value+'°C');">
-          <div style="display:flex;justify-content:space-between;font-family:monospace;font-size:9px;color:var(--muted);margin-top:4px;">
-            <span>25°C (safe)</span><span>40°C</span>
-          </div>
-        </div>
-      </div>
-
-
-
-      <!-- CPU Hotplug -->
-      <div class="tog-row">
-        <div class="tog-ico">⚡</div>
-        <div class="tog-info">
-          <div class="tog-name">CPU Hotplug</div>
-          <div class="tog-desc">Silver-Cores (0-3) offline im Competitive — weniger Throttling</div>
-          <div class="warn on">⚠ Nur für Competitive empfohlen</div>
-        </div>
-        <label class="sw r">
-          <input type="checkbox" id="tog-hotplug"
-            onchange="saveConf('cpu_hotplug_enable',this.checked?'1':'0');
-                      toast(this.checked?'⚡ Hotplug ON':'⚡ Hotplug OFF')">
-          <span class="sw-t"></span>
-        </label>
-      </div>
-
-      <!-- Network QoS -->
-      <div class="tog-row">
-        <div class="tog-ico">📡</div>
-        <div class="tog-info">
-          <div class="tog-name">Network QoS</div>
-          <div class="tog-desc">TC HTB: CoD-Pakete prio 1, DNS prio 2 — niedrigere Latenz</div>
-        </div>
-        <label class="sw g">
-          <input type="checkbox" id="tog-net-qos"
-            onchange="saveConf('net_qos_enable',this.checked?'1':'0');
-                      toast(this.checked?'📡 QoS ON':'📡 QoS OFF')">
-          <span class="sw-t"></span>
-        </label>
-      </div>
-
-      <!-- WiFi Power Save Disable -->
-      <div class="tog-row">
-        <div class="tog-ico">📶</div>
-        <div class="tog-info">
-          <div class="tog-name">WiFi Power Save OFF</div>
-          <div class="tog-desc">Deaktiviert WiFi PS im Gaming — stabileres Ping</div>
-        </div>
-        <label class="sw g">
-          <input type="checkbox" id="tog-wifi-ps"
-            onchange="saveConf('wifi_ps_disable',this.checked?'1':'0');
-                      toast(this.checked?'📶 WiFi PS OFF':'📶 WiFi PS ON')">
-          <span class="sw-t"></span>
-        </label>
-      </div>
-
-      <!-- LRU_GEN Aggressive -->
-      <div class="tog-row">
-        <div class="tog-ico">🧠</div>
-        <div class="tog-info">
-          <div class="tog-name">LRU_GEN Aggressive</div>
-          <div class="tog-desc">Aggressivere Page-Reclaim — weniger Stutter bei Asset-Streaming</div>
-        </div>
-        <label class="sw y">
-          <input type="checkbox" id="tog-lru-gen"
-            onchange="saveConf('lru_gen_enable',this.checked?'1':'0');
-                      toast(this.checked?'🧠 LRU_GEN aggressiv':'🧠 LRU_GEN normal')">
-          <span class="sw-t"></span>
-        </label>
-      </div>
-
     </div>
   </div>
 <div class="toast" id="toast"></div>
@@ -654,7 +505,7 @@ function toast(msg) {
 }
 
 // ── Profil UI ─────────────────────────────────────────────────────────────────
-function setProfileUI(p, thermalOn) {
+function setProfileUI(p) {
     p = (p || 'daily').trim();
     ['daily', 'cooking'].forEach(function(x) {
         var el = document.getElementById('pc-' + x);
@@ -686,7 +537,7 @@ function applyProfile(p) {
     window._lastProf = p;
     window._pendingProf = p;
     run("printf '%s' '" + p + "' > \"" + MANUAL + "\"");
-    setProfileUI(p, document.getElementById('tog-thermal') && document.getElementById('tog-thermal').checked);
+    setProfileUI(p);
     toast('Profil: ' + p.toUpperCase());
     setTimeout(function(){
         loadData(function(d){
@@ -695,95 +546,13 @@ function applyProfile(p) {
                 toast('⚠ Debounce aktiv — Wechsel in ~' + (15 - Math.round((Date.now() - _profClickTs) / 1000)) + 's');
             }
             window._pendingProf = null;
-            renderSettings(d);
-            setProfileUI(actual, d.conf_thermal === '1');
+            setProfileUI(actual);
         });
     }, 6000);
 }
 
 
-// ── Settings Box ─────────────────────────────────────────────────────────────
-function renderSettings(d) {
-    var box = document.getElementById('settings-box');
-    if (!box) return;
 
-    // Helper: row with key + styled value
-    function row(key, val, cls) {
-        return '<div class="s-row"><span class="s-key">' + esc(key) +
-               '</span><span class="s-val ' + (cls||'') + '">' + val + '</span></div>';
-    }
-    function bool(v, trueLabel, falseLabel) {
-        var on = (v && v.trim() === '1');
-        return '<span class="s-val ' + (on ? 'on' : 'off') + '">' +
-               (on ? (trueLabel||'ON') : (falseLabel||'OFF')) + '</span>';
-    }
-
-    // Punkt 4: DOM-Update direkt — renderSettings wird bereits aus applyData's
-    // requestAnimationFrame aufgerufen, doppelt verschachtelter rAF schadet
-    var html = '';
-
-    var prof = (d.profile || d.manual_profile || 'daily').trim();
-    var profLabel = prof === 'cooking' ? 'COOK1NG' : 'DAILY';
-    var profCls = prof === 'cooking' ? 'num' : 'off';
-    html += row('profile', profLabel, profCls);
-
-    // Thermal
-    var thOn = d.conf_thermal && d.conf_thermal.trim()==='1';
-    html += row('thermal_disable',
-        thOn ? '<span class="s-val warn">ON ⚠</span>' : '<span class="s-val off">OFF</span>');
-
-    // Thermal prediction
-    var tpOn = !(d.conf_thermal_pred && d.conf_thermal_pred.trim()==='0');
-    html += row('thermal_predict',
-        tpOn ? '<span class="s-val on">ON</span>' : '<span class="s-val off">OFF</span>');
-
-    // Thread pinning
-    var pinOn = !(d.conf_thread_pin && d.conf_thread_pin.trim()==='0');
-    html += row('thread_pin',
-        pinOn ? '<span class="s-val on">ON</span>' : '<span class="s-val off">OFF</span>');
-
-    // Battery spoof
-    if (d.conf_spoof_enable && d.conf_spoof_enable.trim()==='1') {
-        var t = (d.conf_spoof_temp||'1').trim();
-        html += row('battery_spoof', '<span class="s-val on">ON</span>');
-        html += row('spoof_temp', '<span class="s-val num">' + esc(t) + '°C</span>');
-    } else {
-        html += row('battery_spoof', '<span class="s-val off">OFF</span>');
-    }
-
-    // Boot delay
-    if (d.conf_boot_delay) {
-        html += row('boot_delay', '<span class="s-val num">' + esc(d.conf_boot_delay.trim()) + 's</span>');
-    }
-
-    // Debug
-    var dbgOn = d.conf_debug && d.conf_debug.trim()==='1';
-    if (dbgOn) html += row('debug', '<span class="s-val warn">VERBOSE</span>');
-    else html += row('debug', '<span class="s-val off">OFF</span>');
-
-    var hpOn = d.conf_cpu_hotplug && d.conf_cpu_hotplug.trim()==='1';
-    html += row('cpu_hotplug',
-        hpOn ? '<span class="s-val warn">ON ⚠</span>' : '<span class="s-val off">OFF</span>');
-    var nqOn = d.conf_net_qos && d.conf_net_qos.trim()==='1';
-    html += row('net_qos',
-        nqOn ? '<span class="s-val on">ON</span>' : '<span class="s-val off">OFF</span>');
-    var wpOn = d.conf_wifi_ps && d.conf_wifi_ps.trim()==='1';
-    html += row('wifi_ps_off',
-        wpOn ? '<span class="s-val on">ON</span>' : '<span class="s-val off">OFF</span>');
-    var lgOn = d.conf_lru_gen && d.conf_lru_gen.trim()==='1';
-    html += row('lru_gen',
-        lgOn ? '<span class="s-val on">ON</span>' : '<span class="s-val off">OFF</span>');
-
-    // Net type aus data.txt anzeigen
-    if (d.net_type) {
-        var nt = d.net_type.trim();
-        html += row('net', nt === 'wifi'
-            ? '<span class="s-val on">📶 WiFi</span>'
-            : '<span class="s-val warn">📡 LTE</span>');
-    }
-
-    box.innerHTML = html || '<span style="color:var(--muted)">—</span>';
-}
 
 var _pidMiss = 0;
 // ── Anzeige aus data.txt befüllen ─────────────────────────────────────────────
@@ -922,44 +691,29 @@ function applyData(d) {
     }
 
     (function() {
-        var profile = (d.profile || 'daily').trim();
+        var cooking = (d.profile || 'daily').trim() === 'cooking';
+        var hpOn = d.conf_cpu_hotplug && d.conf_cpu_hotplug.trim() === '1';
         var tweaks = [];
-        tweaks.push({ c:'lo', t:'✅ Selective thermal zones (BCL/PMIC safe)' });
-        tweaks.push({ c:'lo', t:'✅ ZRAM lz4 / page-cluster=0' });
-        tweaks.push({ c:'lo', t:'✅ LMK minfree tuned (default)' });
         tweaks.push({ c:'lo', t:'✅ I/O mq-deadline (UFS blk-mq)' });
-        tweaks.push({ c:'lo', t:'✅ zone24=Silver zone25=Gold (verifiziert)' });
-        if (profile === 'cooking') {
-            tweaks.push({ c:'lw', t:'🔥 Thermal Engine: suspended' });
-        } else {
-            tweaks.push({ c:'lo', t:'✅ Thermal Engine: active' });
-        }
-        if (profile === 'cooking') {
+        tweaks.push({ c:'lo', t:'✅ ZRAM lz4 / page-cluster=0' });
+        tweaks.push({ c:'lo', t:'✅ LMK minfree tuned' });
+        tweaks.push({ c:'lo', t:'✅ LRU_GEN enabled' });
+        if (cooking) {
+            tweaks.push({ c:'lw', t:'🔥 Thermal: daemons killed + trips raised' });
+            tweaks.push({ c:'lw', t:'🔥 LMH/DCVS/PMIC5 disabled' });
+            tweaks.push({ c:'lo', t:'✅ WiFi PS watchdog active' });
             tweaks.push({ c:'lo', t:'✅ TCP BBR + low_latency + QoS' });
             tweaks.push({ c:'lo', t:'✅ uclamp.min=60% top-app' });
-            tweaks.push({ c:'lo', t:'✅ cpuset top-app=0-7 latency_sensitive=1' });
-            tweaks.push({ c:'lo', t:'✅ sched_upmigrate=70 (RenderThread→Gold)' });
-            tweaks.push({ c:'lo', t:'✅ GPU locked 800MHz' });
-            tweaks.push({ c:'lo', t:'✅ SF backpressure disabled' });
-            tweaks.push({ c:'lw', t:'🔥 Gold min=2169MHz schedutil+ (up=500µs)' });
-            tweaks.push({ c:'lw', t:'🔥 Silver min=1497MHz schedutil' });
-            tweaks.push({ c:'lw', t:'🔥 EAS=0 | sched_boost=1' });
+            tweaks.push({ c:'lw', t:'🔥 Gold min=2169MHz | Silver min=1497MHz' });
+            tweaks.push({ c:'lw', t:'🔥 GPU locked 800MHz | EAS=0' });
+            tweaks.push({ c:'li', t:'🧊 Battery spoof @25°C' });
+            if (hpOn) tweaks.push({ c:'lw', t:'⚡ CPU Hotplug: Silver offline' });
         } else {
-            tweaks.push({ c:'lo', t:'✅ GPU 267-800MHz (governor free, idler ON)' });
-            tweaks.push({ c:'lo', t:'✅ Silver 576-1804MHz schedutil' });
-            tweaks.push({ c:'lo', t:'✅ Gold 652-2304MHz schedutil' });
+            tweaks.push({ c:'lo', t:'✅ Thermal: daemons active' });
+            tweaks.push({ c:'lo', t:'✅ GPU 267-800MHz (idler ON)' });
+            tweaks.push({ c:'lo', t:'✅ Silver 576-1804 | Gold 652-2304' });
             tweaks.push({ c:'lo', t:'✅ EAS=1 | uclamp_min=128' });
         }
-        if (d.conf_spoof_enable && d.conf_spoof_enable.trim()==='1')
-            tweaks.push({ c:'li', t:'🧊 Battery Spoof ' + (d.conf_spoof_temp||'25').trim() + '°C' });
-        if (d.conf_cpu_hotplug && d.conf_cpu_hotplug.trim()==='1')
-            tweaks.push({ c:'lw', t:'⚡ CPU Hotplug: Silver OFF (Cooking)' });
-        if (d.conf_net_qos && d.conf_net_qos.trim()==='1')
-            tweaks.push({ c:'lo', t:'✅ Network QoS (TC HTB)' });
-        if (d.conf_wifi_ps && d.conf_wifi_ps.trim()==='1')
-            tweaks.push({ c:'lo', t:'✅ WiFi Power-Save OFF (watchdog)' });
-        if (d.conf_lru_gen && d.conf_lru_gen.trim()==='1')
-            tweaks.push({ c:'lo', t:'✅ LRU_GEN enabled' });
         tweaks.push({ c:'li', t:'✅ HWUI render_ahead=4ms' });
         tweaks.push({ c:'li', t:'✅ QTI inputopts 0.6ms slop' });
         document.getElementById('tweaks-box').innerHTML = tweaks.map(function(t) {
@@ -967,48 +721,12 @@ function applyData(d) {
         }).join('');
     })();
 
-    // Toggles (beim ersten Laden)
-    var chk = function(id, key) {
-        var el = document.getElementById(id);
-        if (el && d[key] !== undefined) el.checked = d[key].trim() === '1';
-    };
-    var _tnow = Date.now();
-    var chkLocked = function(id, key) {
-        var el = document.getElementById(id);
-        if (!el || d[key] === undefined) return;
-        if (window._togTs && window._togTs[key] && (_tnow - window._togTs[key]) < 8000) return;
-        el.checked = d[key].trim() === "1";
-    };
-    chkLocked('tog-thermal',   'conf_thermal');
-    chk('tog-hotplug',          'conf_cpu_hotplug');
-    chk('tog-net-qos',          'conf_net_qos');
-    chk('tog-wifi-ps',          'conf_wifi_ps');
-    chk('tog-lru-gen',          'conf_lru_gen');
 
-    // Battery spoofing
-    var spoofOn = d.conf_spoof_enable && d.conf_spoof_enable.trim() === '1';
-    var spoofEl = document.getElementById('tog-spoof');
-        if (!(window._togTs && window._togTs["conf_spoof_enable"] && (Date.now()-window._togTs["conf_spoof_enable"]) < 8000))
-            if (spoofEl) spoofEl.checked = spoofOn;
-    document.getElementById('spoof-slider-wrap').style.display = spoofOn ? 'block' : 'none';
-    if (d.conf_spoof_temp) {
-        var sv = parseInt(d.conf_spoof_temp.trim(), 10);
-        if (sv >= 25 && sv <= 40) {
-            document.getElementById('spoof-slider').value = sv;
-            document.getElementById('spoof-val-label').textContent = sv + '°C';
-        }
-    }
 
     if ((Date.now() - _profTs) > PROF_LOCK_MS) {
         var p = (d.manual_profile || d.profile || 'daily').trim();
-        if (p) setProfileUI(p, d.conf_thermal && d.conf_thermal.trim() === '1');
+        if (p) setProfileUI(p);
     }
-    // renderSettings nur wenn echte Daten vorhanden (profile-Key als Indikator)
-    if (d.profile || d.conf_thermal !== undefined) {
-        renderSettings(d);
-    }
-
-
     if (d.freeze && !_freezeLoaded) {
         var rawFreeze = d.freeze.replace(/\|/g, '\n');
         loadFreezeFromData(rawFreeze);
@@ -1070,13 +788,6 @@ function applyData(d) {
 }
 
 // ── Cache Cleaner ─────────────────────────────────────────────────────────────
-// ── Battery Spoofing ──────────────────────────────────────────────────────────
-function toggleSpoof(on) {
-    saveConf('battery_spoof_enable', on ? '1' : '0');
-    document.getElementById('spoof-slider-wrap').style.display = on ? 'block' : 'none';
-    toast(on ? '🧊 Battery Spoofing an' : '✓ Battery Spoofing aus');
-}
-
 var _cacheBusy = false;
 var _ramBusy   = false;
 
