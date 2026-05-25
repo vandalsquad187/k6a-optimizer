@@ -26,8 +26,6 @@ use std::path::PathBuf;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -52,7 +50,7 @@ const BROADCAST_CAP: usize = 32;
 
 // ── Data types ───────────────────────────────────────────────────────────────
 
-/// Full state snapshot — mirrors what service.sh previously wrote to data.txt
+/// Full state snapshot — mirrors what controller writes to data.txt
 /// All fields are Option<String> so partial updates work
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeviceState {
@@ -61,15 +59,26 @@ pub struct DeviceState {
     pub kernel_real: Option<String>,
     pub android: Option<String>,
     pub bat: Option<String>,
+    pub bat_temp: Option<String>,
     pub uptime: Option<String>,
     pub pid: Option<String>,
+    pub state: Option<String>,
 
     // Networking
     pub ping: Option<String>,
+    pub ping_stale: Option<String>,
+    pub net_type: Option<String>,
 
     // Profile
     pub profile: Option<String>,
     pub manual_profile: Option<String>,
+    pub temp: Option<String>,
+
+    // CPU/GPU
+    pub cpu_sil_mhz: Option<String>,
+    pub cpu_gold_mhz: Option<String>,
+    pub gpu_mhz: Option<String>,
+    pub gpu_busy: Option<String>,
 
     // Memory
     pub ram_used: Option<String>,
@@ -77,22 +86,31 @@ pub struct DeviceState {
     pub cache_kb: Option<String>,
     pub last_clean: Option<String>,
 
-    // Config toggles
-    pub conf_auto: Option<String>,
+    // UI state
+    pub pause: Option<String>,
+    pub freeze: Option<String>,
+
+    // Config toggles — matches settings.conf keys
     pub conf_thermal: Option<String>,
-    pub conf_boost: Option<String>,
-    pub conf_autocache: Option<String>,
     pub conf_spoof_enable: Option<String>,
     pub conf_spoof_temp: Option<String>,
-    pub conf_bypass_thresh: Option<String>,
+    pub conf_thermal_pred: Option<String>,
+    pub conf_thread_pin: Option<String>,
+    pub conf_boot_delay: Option<String>,
+    pub conf_debug: Option<String>,
+    pub conf_adaptive_thermal: Option<String>,
+    pub conf_cpu_hotplug: Option<String>,
+    pub conf_net_qos: Option<String>,
+    pub conf_wifi_ps: Option<String>,
+    pub conf_lru_gen: Option<String>,
 
     // Per-app and log
-    pub perapp: Option<String>,
     pub log: Option<String>,
 
     // Daemon metadata
     pub daemon_version: Option<String>,
     pub daemon_uptime_s: Option<u64>,
+    pub tick: Option<String>,
 }
 
 impl DeviceState {
@@ -100,28 +118,44 @@ impl DeviceState {
     pub fn apply_kv(&mut self, key: &str, value: &str) {
         let v = Some(value.to_string());
         match key {
-            "kernel"            => self.kernel = v,
-            "kernel_real"       => self.kernel_real = v,
-            "android"           => self.android = v,
-            "bat"               => self.bat = v,
-            "uptime"            => self.uptime = v,
-            "pid"               => self.pid = v,
-            "ping"              => self.ping = v,
-            "profile"           => self.profile = v,
-            "manual_profile"    => self.manual_profile = v,
-            "ram_used"          => self.ram_used = v,
-            "ram_total"         => self.ram_total = v,
-            "cache_kb"          => self.cache_kb = v,
-            "last_clean"        => self.last_clean = v,
-            "conf_auto"         => self.conf_auto = v,
-            "conf_thermal"      => self.conf_thermal = v,
-            "conf_boost"        => self.conf_boost = v,
-            "conf_autocache"    => self.conf_autocache = v,
-            "conf_spoof_enable" => self.conf_spoof_enable = v,
-            "conf_spoof_temp"   => self.conf_spoof_temp = v,
-            "conf_bypass_thresh"=> self.conf_bypass_thresh = v,
-            "perapp"            => self.perapp = v,
-            "log"               => self.log = v,
+            "kernel"               => self.kernel = v,
+            "kernel_real"          => self.kernel_real = v,
+            "android"              => self.android = v,
+            "bat"                  => self.bat = v,
+            "bat_temp"             => self.bat_temp = v,
+            "uptime"               => self.uptime = v,
+            "pid"                  => self.pid = v,
+            "state"                => self.state = v,
+            "ping"                 => self.ping = v,
+            "ping_stale"           => self.ping_stale = v,
+            "net_type"             => self.net_type = v,
+            "profile"              => self.profile = v,
+            "manual_profile"       => self.manual_profile = v,
+            "temp"                 => self.temp = v,
+            "cpu_sil_mhz"          => self.cpu_sil_mhz = v,
+            "cpu_gold_mhz"         => self.cpu_gold_mhz = v,
+            "gpu_mhz"              => self.gpu_mhz = v,
+            "gpu_busy"             => self.gpu_busy = v,
+            "ram_used"             => self.ram_used = v,
+            "ram_total"            => self.ram_total = v,
+            "cache_kb"             => self.cache_kb = v,
+            "last_clean"           => self.last_clean = v,
+            "pause"                => self.pause = v,
+            "freeze"               => self.freeze = v,
+            "conf_thermal"         => self.conf_thermal = v,
+            "conf_spoof_enable"    => self.conf_spoof_enable = v,
+            "conf_spoof_temp"      => self.conf_spoof_temp = v,
+            "conf_thermal_pred"    => self.conf_thermal_pred = v,
+            "conf_thread_pin"      => self.conf_thread_pin = v,
+            "conf_boot_delay"      => self.conf_boot_delay = v,
+            "conf_debug"           => self.conf_debug = v,
+            "conf_adaptive_thermal"=> self.conf_adaptive_thermal = v,
+            "conf_cpu_hotplug"     => self.conf_cpu_hotplug = v,
+            "conf_net_qos"         => self.conf_net_qos = v,
+            "conf_wifi_ps"         => self.conf_wifi_ps = v,
+            "conf_lru_gen"         => self.conf_lru_gen = v,
+            "log"                  => self.log = v,
+            "tick"                 => self.tick = v,
             _ => {} // unknown keys are silently ignored
         }
     }
@@ -340,15 +374,12 @@ async fn handle_ws_connection(
             Ok(Message::Text(text)) => {
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(ClientMessage::Ping) => {
-                        // Pong is handled by tungstenite automatically for binary ping frames
-                        // but we also handle JSON pings from the JS client
-                        let _ = rx; // suppress unused warning
+                        let _ = rx;
                     }
                     Ok(ClientMessage::Refresh) => {
                         info!("Client {} requested refresh", addr);
-                        // Will be handled by next state update from service.sh
                     }
-                    Err(_) => {} // ignore unknown messages
+                    Err(_) => {}
                 }
             }
             Ok(Message::Close(_)) => break,
@@ -393,7 +424,6 @@ async fn http_server() {
                         .serve_connection(io, service)
                         .await
                     {
-                        // Connection errors are normal (client closed early)
                         let _ = e;
                     }
                 });
@@ -523,20 +553,19 @@ fn signal_controller_reload(moddir: &PathBuf) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
-// MODDIR kommt als erstes Argument oder wird aus dem Binary-Pfad abgeleitet
-let moddir: PathBuf = std::env::args()
-    .nth(1)
-    .map(PathBuf::from)
-    .unwrap_or_else(|| {
-        std::env::current_exe()
-            .unwrap()
-            .parent().unwrap()   // bin/
-            .parent().unwrap()   // moddir
-            .to_path_buf()
-    });
-
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
+    let moddir: PathBuf = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .unwrap()
+                .parent().unwrap()   // bin/
+                .parent().unwrap()   // moddir
+                .to_path_buf()
+        });
+
     // Init logging — on Android this goes to logcat via stderr
     tracing_subscriber::fmt()
         .with_target(false)
@@ -557,6 +586,46 @@ async fn main() {
     let (tx, _) = broadcast::channel::<WsMessage>(BROADCAST_CAP);
     let start_time = std::time::Instant::now();
 
+    // ── inotify Watch auf settings.conf ──────────────────────────────────
+    // Läuft in eigenem Thread (nicht tokio) damit Blocking-I/O das async
+    // Runtime nicht blockiert. Bei Änderung: SIGHUP an k6a-controller.
+    let moddir_watch = moddir.clone();
+    std::thread::spawn(move || {
+        let conf_path = moddir_watch.join("config/settings.conf");
+
+        let mut inotify = match Inotify::init() {
+            Ok(i)  => i,
+            Err(e) => { eprintln!("[daemon] inotify init: {}", e); return; }
+        };
+
+        if let Err(e) = inotify.watches().add(
+            &conf_path,
+            WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+        ) {
+            eprintln!("[daemon] inotify watch add: {}", e);
+            return;
+        }
+
+        eprintln!("[daemon] Config-Watch aktiv: {:?}", conf_path);
+        let mut buffer = [0u8; 1024];
+
+        loop {
+            match inotify.read_events_blocking(&mut buffer) {
+                Ok(events) => {
+                    let count = events.count();
+                    if count > 0 {
+                        eprintln!("[daemon] settings.conf geändert ({} events) → reload", count);
+                        signal_controller_reload(&moddir_watch);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[daemon] inotify read error: {}", e);
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            }
+        }
+    });
+
     // Spawn all services concurrently
     tokio::join!(
         unix_socket_listener(Arc::clone(&state), tx.clone(), start_time),
@@ -565,48 +634,3 @@ async fn main() {
         data_txt_watchdog(Arc::clone(&state), tx.clone()),
     );
 }
-
-
-// ── inotify Watch auf settings.conf ──────────────────────────────────────
-// Läuft in eigenem Thread damit der WebSocket-Loop nicht blockiert wird.
-// Bei Änderung: SIGHUP an k6a-controller → Hot Reload der Config.
-let moddir_watch = moddir.clone(); // moddir ist dein bestehender PathBuf
-std::thread::spawn(move || {
-    let conf_path = moddir_watch.join("config/settings.conf");
-
-    let mut inotify = match Inotify::init() {
-        Ok(i)  => i,
-        Err(e) => { eprintln!("[daemon] inotify init fehlgeschlagen: {}", e); return; }
-    };
-
-    if let Err(e) = inotify.watches().add(
-        &conf_path,
-        // CLOSE_WRITE  = direktes Speichern (echo, WebUI-Write)
-        // MOVED_TO     = atomisches mv (vim, sed -i, nano)
-        WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
-    ) {
-        eprintln!("[daemon] inotify watch fehlgeschlagen: {}", e);
-        return;
-    }
-
-    eprintln!("[daemon] Config-Watch aktiv: {:?}", conf_path);
-    let mut buffer = [0u8; 1024];
-
-    loop {
-        match inotify.read_events_blocking(&mut buffer) {
-            Ok(events) => {
-                // Mindestens ein Event → SIGHUP senden
-                let count = events.count();
-                if count > 0 {
-                    eprintln!("[daemon] settings.conf geändert ({} events) → reload", count);
-                    signal_controller_reload(&moddir_watch);
-                }
-            }
-            Err(e) => {
-                eprintln!("[daemon] inotify read error: {}", e);
-                // Kurz warten und weiter — kein panic
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-        }
-    }
-});
