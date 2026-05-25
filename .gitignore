@@ -18,7 +18,6 @@ run/*
 webroot/data.txt
 webroot/devflags.txt
 webroot/freeze_dump.txt
-webroot/ascii.txt
 webroot/test.txt
 
 # IDE

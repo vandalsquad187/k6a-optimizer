@@ -72,14 +72,15 @@ w() {
             } ;;
     esac
 
-    # CPU Safe-Guard: min_freq nie > max_freq
+    # CPU Safe-Guard: min_freq nie > max_freq — auto-raise max wenn nötig
     case "$node" in
         */scaling_min_freq)
             local max_freq
             max_freq=$(cat "${node/scaling_min_freq/scaling_max_freq}" 2>/dev/null)
             [ -n "$max_freq" ] && [ "${val:-0}" -gt "${max_freq:-0}" ] 2>/dev/null && {
-                _warn "CPU min > max blocked: ${val} > ${max_freq} at $node"
-                return 1
+                echo "$val" > "${node/scaling_min_freq/scaling_max_freq}" 2>/dev/null || true
+                sleep 0.05
+                _warn "CPU min>max: auto-raised max to ${val}Hz at $node"
             } ;;
     esac
 
@@ -144,12 +145,20 @@ gpu_cooking() {
 # CPU — max→min→governor verhindert Freq-Spikes beim Governor-Wechsel
 # ═══════════════════════════════════════════════════════════════════════════════
 cpu_set() {
-    local gov="$1" smin="$2" smax="$3" gmin="$4" gmax="$5"
+    local gov="$1" smin="$2" smax="$3" gmin="$4" gmax="$5" _r
     w "$P0/scaling_max_freq" "$smax"
     w "$P6/scaling_max_freq" "$gmax"
     sleep 0.2
-    w "$P0/scaling_min_freq" "$smin"
-    w "$P6/scaling_min_freq" "$gmin"
+    for _r in 0 1 2; do
+        w "$P0/scaling_min_freq" "$smin"
+        [ "$(cat "$P0/scaling_min_freq" 2>/dev/null)" -ge "$smin" ] 2>/dev/null && break
+        w "$P0/scaling_max_freq" "$smax"; sleep 0.1
+    done
+    for _r in 0 1 2; do
+        w "$P6/scaling_min_freq" "$gmin"
+        [ "$(cat "$P6/scaling_min_freq" 2>/dev/null)" -ge "$gmin" ] 2>/dev/null && break
+        w "$P6/scaling_max_freq" "$gmax"; sleep 0.1
+    done
     w "$P0/scaling_governor" "$gov"
     w "$P6/scaling_governor" "$gov"
 }
@@ -296,9 +305,6 @@ lmh_disable() {
     done
     w "$P0/scaling_max_freq" "1804800"
     w "$P6/scaling_max_freq" "2304000"
-    sleep 1
-    w "$P0/scaling_min_freq" "576000"
-    w "$P6/scaling_min_freq" "652800"
     _log "LMH: deaktiviert (DCVS, PMIC5, thermal limits)"
 }
 

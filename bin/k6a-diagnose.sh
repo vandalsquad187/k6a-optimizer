@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a Optimizer — Diagnose Script v7.63
+# k6a Optimizer — Diagnose Script v9.0
 # Nutzung: su -c "sh /data/adb/modules/Bad4zz89_k6a_tweaks/bin/k6a-diagnose.sh"
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -181,9 +181,7 @@ echo ""
 # ── WIFI POWER SAVE ──────────────────────────────────────────────────────────
 echo "[ WIFI POWER SAVE ]"
 wifi_ps=$(iw dev wlan0 get power_save 2>/dev/null | grep -o "on\|off" || echo "N/A")
-wifi_cfg=$(grep "^wifi_ps_disable=" "$CONF" 2>/dev/null | cut -d= -f2 || echo "N/A")
 echo "  Status: $wifi_ps"
-echo "  Config: wifi_ps_disable=$wifi_cfg"
 echo ""
 
 # ── NETWORK ──────────────────────────────────────────────────────────────────

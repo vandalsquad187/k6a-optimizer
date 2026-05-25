@@ -7,396 +7,360 @@
 <style>
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 :root {
-  /* Tricky Addon inspiriertes Rot-Theme */
-  --bg:     #30161d;          /* fast schwarz mit Rot-Unterton */
-  --card:   #1e0e13;          /* Kacheln: tief-dunkelrot */
-  --border: #2e1215;          /* Rahmen: sichtbares Dunkelrot */
-  --accent: #e53935;          /* Primär-Akzent: sattes Rot */
-  --accent2: #ff6b35;         /* Sekundär: Orange-Rot (Tricky Addon Logo) */
-  --cyan:   #ff4444;          /* Info-Werte: Rot statt Cyan */
-  --green:  #00e676;          /* Positiv-Status: Grün bleibt */
-  --yellow: #ff9800;          /* Warnings: Orange */
-  --red:    #ff1744;          /* Fehler/Danger */
-  --purple: #ff6b6b;          /* Uptime: Rosé-Rot */
-  --text:   #f0dede;          /* Text: leicht Warm-Weiß */
-  --muted:  #6b4040;          /* Gedämpft: Dunkelrosé */
-  --glow:   rgba(229,57,53,.15); /* Glow-Effekt */
-  --space-xs:  4px;
-  --space-sm:  8px;
-  --space-md: 12px;
-  --space-lg: 16px;
-  --radius-sm:  8px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 20px;
+  --bg:     #30161d;
+  --card:   #1e0e13;
+  --border: #2e1215;
+  --accent: #e53935;
+  --accent2:#ff6b35;
+  --green:  #00e676;
+  --yellow: #ff9800;
+  --red:    #ff1744;
+  --purple: #ff6b6b;
+  --text:   #f0dede;
+  --muted:  #6b4040;
+  --glow:   rgba(229,57,53,.15);
 }
 body {
   background: var(--bg);
-  /* Subtiler Vignetten-Effekt */
-background-image: radial-gradient(
-  ellipse at top,
-  rgba(30,14,19,0.2) 0%,
-  rgba(30,14,19,0.6) 70%
-);
+  background-image: radial-gradient(ellipse at top, rgba(30,14,19,0.2) 0%, rgba(30,14,19,0.6) 70%);
   color: var(--text);
   font-family: system-ui, sans-serif;
   font-size: 14px;
-  padding-bottom: 40px;
+  padding-bottom: 48px;
 }
-
 .header {
-  padding: 10px 16px 8px;
+  padding: 12px 16px 10px;
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 0 0 rgba(229,57,53,.2), 0 4px 20px rgba(0,0,0,.5);
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 10;
   background: var(--card);
 }
-.h-tag  { font-size:8px; color:var(--accent); letter-spacing:3px; font-family:monospace; text-shadow: 0 0 8px rgba(229,57,53,.6); }
-.h-name { font-size:20px; font-weight:800; color:#fff; }
-.h-sub  { font-size:9px; color:var(--muted); font-family:monospace; margin-top:0px; }
-.badge  { font-family:monospace; font-size:11px; padding:6px 14px; border-radius:20px; border:1px solid; letter-spacing:1px; font-weight:700; }
-.badge.daily   { color:#ff9800;      border-color:rgba(255,152,0,.5);  background:rgba(255,152,0,.12); box-shadow:0 0 10px rgba(255,152,0,.15); }
-.badge.cooking { color:#ff1744;    border-color:rgba(255,23,68,.6);  background:rgba(255,23,68,.15);  box-shadow:0 0 14px rgba(255,23,68,.35); }
-
-.body { padding:14px 16px; max-width:480px; margin:0 auto; }
-
-.info-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
-.info-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
-.lbl { font-family:monospace; font-size:9px; color:var(--muted); letter-spacing:2px; text-transform:uppercase; margin-bottom:4px; }
-.val { font-family:monospace; font-size:12px; }
-.cyan   .val { color:var(--cyan);   }
-.green  .val { color:var(--green);  }
-.yellow .val { color:var(--yellow); }
-.purple .val { color:var(--purple); }
-
-.ping-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-.ping-big { font-family:monospace; font-size:12px; font-weight:700; color:var(--text); }
-.ping-big.good { color:var(--green);  }
-.ping-big.ok   { color:var(--yellow); }
-.ping-big.bad  { color:var(--red);    }
-
-.section { margin-top:18px; }
-.sec-title { font-size:10px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:var(--accent); margin-bottom:10px; display:flex; align-items:center; gap:8px; text-shadow:0 0 10px rgba(229,57,53,.4); }
-.sec-title::after { content:''; flex:1; height:1px; background: linear-gradient(to right, rgba(229,57,53,.4), transparent); }
-
-.profiles { display:grid; gap:8px; }
-.pc { background:var(--card); border:2px solid var(--border); border-radius:12px; padding:16px 8px; text-align:center; cursor:pointer; user-select:none; transition: all .18s; }
-.pc:active { transform: scale(.96); }
-.pc.active.daily   { border-color:#ff9800;        background:rgba(255,152,0,.1);  box-shadow:0 0 16px rgba(255,152,0,.2); }
-.pc.active.cooking { border-color:#ff1744; background:rgba(255,23,68,.14); box-shadow:0 0 18px rgba(255,23,68,.35); }
-.pc-icon { font-size:26px; margin-bottom:7px; }
-.pc-name { font-size:12px; font-weight:800; letter-spacing:.5px; }
-.pc-sub  { font-family:monospace; font-size:9px; color:var(--muted); margin-top:3px; }
-#pc-daily    .pc-name { color:#ff9800; }
-#pc-cooking  .pc-name { color:#ff1744; }
-
-
-
-.pa-item { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 14px; display:flex; align-items:center; gap:10px; margin-bottom:2px; }
-.pa-name { font-size:13px; font-weight:600; flex:1; }
-.pa-pkg  { font-family:monospace; font-size:9px; color:var(--muted); }
-.pa-sel  { background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:monospace; font-size:10px; padding:5px 8px; border-radius:6px; }
-.pa-del  { background:none; border:none; color:var(--muted); font-size:16px; cursor:pointer; padding:0 4px; }
-.pa-add  { width:100%; padding:11px; margin-top:6px; background:transparent; border:1px dashed rgba(229,57,53,.25); border-radius:8px; color:var(--muted); font-family:monospace; font-size:11px; cursor:pointer; }
-
-/* ── Freeze Engine UI ─────────────────────────────────────────────────────── */
-.fr-rule  { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:6px; }
-.fr-trigger { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.fr-trigger-name { font-size:13px; font-weight:700; color:var(--accent); flex:1; }
-.fr-trigger-pkg  { font-family:monospace; font-size:9px; color:var(--muted); }
-.fr-trigger-del  { background:none; border:none; color:var(--muted); font-size:16px; cursor:pointer; }
-.fr-targets { display:flex; flex-direction:column; gap:4px; padding-left:12px; border-left:2px solid rgba(229,57,53,.3); }
-.fr-target  { display:flex; align-items:center; gap:8px; font-family:monospace; font-size:10px; color:var(--text); }
-.fr-target-ice { color:var(--accent); font-size:13px; }
-.fr-target-del  { background:none; border:none; color:var(--muted); font-size:13px; cursor:pointer; }
-.fr-add-target  { background:none; border:1px dashed rgba(229,57,53,.25); border-radius:6px; color:var(--accent); font-family:monospace; font-size:10px; padding:4px 10px; cursor:pointer; margin-top:4px; width:100%; }
-.fr-add-rule { width:100%; padding:11px; margin-top:6px; background:transparent; border:1px dashed rgba(229,57,53,.25); border-radius:8px; color:var(--accent); font-family:monospace; font-size:11px; cursor:pointer; }
-.fr-empty { font-family:monospace; font-size:10px; color:var(--muted); text-align:center; padding:16px; }
-
-.cache-row { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; display:flex; align-items:center; gap:12px; }
-.cache-lbl { font-family:monospace; font-size:9px; color:var(--muted); letter-spacing:2px; margin-bottom:3px; }
-.cache-val { font-family:monospace; font-size:20px; font-weight:700; color:var(--yellow); }
-.cache-btn { flex:1; padding:12px; border-radius:8px; background:rgba(229,57,53,.1); border:1px solid rgba(229,57,53,.3); color:var(--accent); font-weight:700; font-size:13px; cursor:pointer; transition:.18s; }
-.cache-last { font-family:monospace; font-size:10px; color:var(--muted); margin-top:6px; min-height:16px; }
-
-.log-box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-family:monospace; font-size:11px; line-height:1.8; max-height:200px; overflow-y:auto; color:var(--muted); }
-
-/* ── ASCII Box ─────────────────────────────────────────────────────────── */
-.ascii-box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-family:monospace; font-size:9px; line-height:1.5; color:var(--accent); white-space:pre; overflow:hidden; text-align:center; flex:1; }
-.lo { color:var(--green);  }
-.lw { color:var(--yellow); }
-.le { color:var(--red);    }
-.li { color:var(--cyan);   }
-
-/* ── Unified info chip ───────────────────────────────────────────────────── */
-.info-chip {
+.header-left { display:flex; flex-direction:column; gap:2px; }
+.h-tag  { font-size:8px; color:var(--accent); letter-spacing:3px; font-family:monospace; text-shadow:0 0 8px rgba(229,57,53,.6); }
+.h-brand { font-size:9px; line-height:1.4; letter-spacing:.5px; font-family:monospace; font-weight:400; color:#fff; }
+.h-sub  { font-size:8px; color:var(--muted); font-family:monospace; letter-spacing:2px; }
+.header-right { display:flex; flex-direction:column; align-items:center; gap:4px; }
+.badge { font-family:monospace; font-size:10px; padding:5px 12px; border-radius:20px; border:1px solid; letter-spacing:1px; font-weight:700; transition:all .3s ease; }
+.badge.daily   { color:#ff9800; border-color:rgba(255,152,0,.5); background:rgba(255,152,0,.12); box-shadow:0 0 10px rgba(255,152,0,.15); }
+.badge.cooking { color:#ff1744; border-color:rgba(255,23,68,.6); background:rgba(255,23,68,.15); box-shadow:0 0 14px rgba(255,23,68,.35); }
+#inf-pid { font-family:monospace; font-size:9px; letter-spacing:1px; transition:color .3s ease; }
+#ws-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--muted); transition:all .3s ease; }
+#profile-bar { width:80px; height:2px; border-radius:2px; transition:background .4s ease,box-shadow .4s ease; }
+.body { padding:14px 16px; max-width:420px; margin:0 auto; display:flex; flex-direction:column; gap:10px; }
+.card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-top: 1px solid rgba(229,57,53,.3);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 2px 12px rgba(0,0,0,.4), inset 0 1px 0 rgba(229,57,53,.08);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 2px 16px rgba(0,0,0,.4);
 }
-.chip-row  { display:flex; justify-content:space-between; padding:11px 14px; gap:8px; }
-.chip-item { display:flex; flex-direction:column; gap:3px; flex:1; }
-.chip-item:last-child { align-items:flex-end; }
-.chip-lbl  { font-family:monospace; font-size:9px; color:var(--muted); letter-spacing:2px; text-transform:uppercase; }
-.chip-val  { font-family:monospace; font-size:12px; color:var(--text); }
-.chip-val.cyan   { color:var(--cyan);   }
-.chip-val.green  { color:var(--green);  }
-.chip-val.yellow { color:var(--yellow); }
-.chip-val.purple { color:var(--purple); }
-.chip-val.red    { color:var(--red);    }
-.chip-val.ping-big { font-size:20px; font-weight:700; }
-.chip-divider { height:1px; background:var(--border); margin:0; }
-
-.toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(16px); background:var(--card); border:1px solid rgba(229,57,53,.4); border-radius:20px; padding:10px 20px; font-family:monospace; font-size:12px; opacity:0; transition:.25s; pointer-events:none; white-space:nowrap; z-index:99; box-shadow:0 4px 20px rgba(229,57,53,.2); }
+.card-title {
+  font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
+  color:var(--accent); margin-bottom:10px; text-shadow:0 0 8px rgba(229,57,53,.3);
+  display:flex; align-items:center; gap:6px;
+}
+.card-title::after { content:''; flex:1; height:1px; background:linear-gradient(to right, rgba(229,57,53,.3), transparent); }
+.cook-banner {
+  padding:10px 14px; background:rgba(255,23,68,.12); border:1px solid rgba(255,23,68,.4);
+  border-radius:10px; font-family:monospace; font-size:9px; color:#ff4444;
+  letter-spacing:.5px; text-align:center; line-height:1.6;
+}
+.profiles { display:flex; gap:10px; }
+.pc {
+  flex:1; background:var(--card); border:2px solid var(--border); border-radius:14px;
+  padding:14px 10px 12px; text-align:center; cursor:pointer; user-select:none;
+  transition:all .2s ease; position:relative; overflow:hidden;
+}
+.pc:active { transform:scale(.96); }
+.pc.active.daily {
+  border-color:#ff9800; background:rgba(255,152,0,.08); box-shadow:0 0 20px rgba(255,152,0,.2);
+}
+.pc.active.cooking {
+  border-color:#ff1744; background:rgba(255,23,68,.1); box-shadow:0 0 22px rgba(255,23,68,.35);
+}
+.pc-icon { font-size:24px; margin-bottom:4px; }
+.pc-name { font-size:13px; font-weight:800; letter-spacing:.5px; }
+#pc-daily .pc-name { color:#ff9800; }
+#pc-cooking .pc-name { color:#ff1744; }
+.pc-sub { font-family:monospace; font-size:8px; color:var(--muted); margin-top:2px; }
+.pc-live { display:flex; justify-content:center; gap:10px; margin-top:6px; font-family:monospace; font-size:10px; }
+.pc-live-item { display:flex; align-items:center; gap:3px; }
+.pc-live-item .lv { color:var(--yellow); font-weight:700; }
+.pc-live-item .lc { color:var(--muted); font-size:8px; }
+.sec-divider { height:1px; background:linear-gradient(to right, transparent, rgba(229,57,53,.2), transparent); margin:2px 0; }
+.temp-row { display:flex; align-items:center; gap:8px; }
+.temp-big { font-family:monospace; font-size:22px; font-weight:800; color:var(--text); min-width:52px; }
+.temp-big.hot { color:var(--red); }
+.temp-big.warm { color:var(--yellow); }
+.temp-big.cool { color:var(--green); }
+.temp-info { flex:1; display:flex; flex-direction:column; gap:4px; }
+.temp-bar-track { height:3px; background:rgba(255,255,255,.06); border-radius:3px; overflow:hidden; }
+.temp-bar-fill { height:100%; border-radius:3px; background:linear-gradient(to right, var(--green), var(--yellow), var(--red)); transition:width .5s ease; }
+.temp-details { display:flex; justify-content:space-between; font-family:monospace; font-size:8px; color:var(--muted); margin-top:1px; }
+.temp-sparkline-wrap { margin-top:6px; }
+.temp-sparkline-wrap canvas { width:100%; height:28px; border-radius:6px; background:rgba(0,0,0,.2); display:block; }
+.temp-sub { display:flex; gap:14px; font-family:monospace; font-size:9px; color:var(--muted); margin-top:2px; }
+.temp-sub .ts-val { color:var(--text); font-weight:600; }
+.sys-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.sys-item { display:flex; flex-direction:column; gap:1px; }
+.sys-lbl { font-family:monospace; font-size:7px; color:var(--muted); letter-spacing:1px; }
+.sys-val { font-family:monospace; font-size:11px; font-weight:700; color:var(--text); }
+.sys-val.gold { color:var(--yellow); }
+.sys-val.cyan { color:var(--red); }
+.sys-val.grn { color:var(--green); }
+.sys-bar-track { height:2px; background:rgba(255,255,255,.06); border-radius:2px; overflow:hidden; margin-top:1px; }
+.sys-bar-fill { height:100%; border-radius:2px; transition:width .5s ease; }
+.sys-bar-fill.low { background:var(--green); }
+.sys-bar-fill.mid { background:var(--yellow); }
+.sys-bar-fill.high { background:var(--red); }
+.sys-row { display:flex; justify-content:space-between; align-items:center; }
+.sys-row + .sys-row { margin-top:4px; }
+.tweak-item { font-family:monospace; font-size:8px; line-height:1.7; }
+.tweak-item.lo { color:var(--green); }
+.tweak-item.lw { color:var(--yellow); }
+.tweak-item.le { color:var(--red); }
+.tweak-item.li { color:var(--purple); }
+.ctrl-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.ctrl-btn {
+  padding:10px; border-radius:8px; border:1px solid var(--border);
+  background:rgba(255,255,255,.04); color:var(--text); font-family:monospace;
+  font-size:11px; font-weight:700; cursor:pointer; transition:all .15s ease;
+  letter-spacing:1px; text-align:center;
+}
+.ctrl-btn:active { transform:scale(.95); }
+.ctrl-btn.restart { background:rgba(180,40,40,.18); border-color:rgba(200,60,60,.4); color:var(--red); }
+.ctrl-btn.pause  { background:rgba(180,130,0,.18); border-color:rgba(200,160,0,.4); color:var(--yellow); }
+.ctrl-status { font-family:monospace; font-size:9px; color:var(--muted); text-align:center; margin-top:6px; min-height:14px; }
+.acc-header {
+  display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;
+  font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
+  color:var(--accent); text-shadow:0 0 8px rgba(229,57,53,.3);
+}
+.acc-header .acc-caret { transition:transform .2s ease; font-size:11px; }
+.acc-header.open .acc-caret { transform:rotate(90deg); }
+.acc-body { overflow:hidden; max-height:0; transition:max-height .3s ease; }
+.acc-body.open { max-height:2000px; }
+.acc-inner { padding-top:10px; }
+.pa-item { display:flex; align-items:center; gap:10px; padding:8px 0; }
+.pa-item + .pa-item { border-top:1px solid var(--border); }
+.pa-name { font-size:12px; font-weight:600; flex:1; }
+.pa-pkg  { font-family:monospace; font-size:8px; color:var(--muted); }
+.pa-sel  { background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:monospace; font-size:9px; padding:4px 6px; border-radius:6px; }
+.pa-del  { background:none; border:none; color:var(--muted); font-size:15px; cursor:pointer; padding:0 4px; }
+.pa-add  { width:100%; padding:10px; margin-top:4px; background:transparent; border:1px dashed rgba(229,57,53,.25); border-radius:8px; color:var(--muted); font-family:monospace; font-size:10px; cursor:pointer; }
+.fr-rule  { padding:8px 0; }
+.fr-rule + .fr-rule { border-top:1px solid var(--border); }
+.fr-trigger { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.fr-trigger-name { font-size:11px; font-weight:700; color:var(--accent); flex:1; }
+.fr-trigger-pkg  { font-family:monospace; font-size:8px; color:var(--muted); }
+.fr-trigger-del  { background:none; border:none; color:var(--muted); font-size:15px; cursor:pointer; }
+.fr-targets { display:flex; flex-direction:column; gap:3px; padding-left:12px; border-left:2px solid rgba(229,57,53,.3); }
+.fr-target  { display:flex; align-items:center; gap:8px; font-family:monospace; font-size:9px; color:var(--text); }
+.fr-target-ice { color:var(--accent); font-size:12px; }
+.fr-target-del  { background:none; border:none; color:var(--muted); font-size:12px; cursor:pointer; }
+.fr-add-target  { background:none; border:1px dashed rgba(229,57,53,.25); border-radius:6px; color:var(--accent); font-family:monospace; font-size:9px; padding:3px 8px; cursor:pointer; margin-top:3px; width:100%; }
+.fr-add-rule { width:100%; padding:10px; margin-top:4px; background:transparent; border:1px dashed rgba(229,57,53,.25); border-radius:8px; color:var(--accent); font-family:monospace; font-size:10px; cursor:pointer; }
+.fr-empty { font-family:monospace; font-size:9px; color:var(--muted); text-align:center; padding:12px; }
+.log-box { font-family:monospace; font-size:10px; line-height:1.8; max-height:150px; overflow-y:auto; color:var(--muted); }
+.log-box > div { padding:1px 0; }
+.toast {
+  position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px);
+  background:var(--card); border:1px solid rgba(229,57,53,.4); border-radius:10px;
+  padding:10px 20px; font-family:monospace; font-size:10px; color:var(--text);
+  box-shadow:0 4px 24px rgba(0,0,0,.6); opacity:0; transition:all .3s ease;
+  pointer-events:none; z-index:100; white-space:nowrap;
+}
 .toast.on { opacity:1; transform:translateX(-50%) translateY(0); }
-
-/* ── Progress Bars ─────────────────────────────────────────────────────────── */
-.prog-wrap { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
-.prog-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
-.prog-label { font-family:monospace; font-size:9px; color:var(--muted); letter-spacing:2px; text-transform:uppercase; }
-.prog-value { font-family:monospace; font-size:16px; font-weight:700; color:var(--yellow); }
-.prog-track { height:6px; background:rgba(255,255,255,.06); border-radius:6px; overflow:hidden; margin-bottom:10px; }
-.prog-bar   { height:100%; border-radius:6px; transition: width .6s ease; background: linear-gradient(to right, #e53935, #ff9800); }
-.prog-bar.low  { background: linear-gradient(to right, #e53935, #ff9800); }
-.prog-bar.mid  { background: linear-gradient(to right, #ff9800, #ffd600); }
-.prog-bar.high { background: linear-gradient(to right, #ff1744, #ff4444); }
-.prog-btn { width:100%; padding:11px; border-radius:8px; background:rgba(229,57,53,.1); border:1px solid rgba(229,57,53,.3); color:var(--accent); font-weight:700; font-size:13px; cursor:pointer; transition:.18s; }
-.cache-last { font-family:monospace; font-size:10px; color:var(--muted); margin-top:8px; min-height:16px; }
-
-/* ── Profile Grid (2 columns) ──────────────────────────────────────────── */
-.profiles {
-  grid-template-columns: repeat(2, 1fr) !important;
+@keyframes pulse-glow {
+  0%, 100% { box-shadow:0 0 14px rgba(255,23,68,.25); }
+  50% { box-shadow:0 0 24px rgba(255,23,68,.5); }
 }
-
-/* ── System Grid (gleichwertige Spalten) ───────────────────────────────── */
-.system-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  align-items: start;
-}
-.system-col-label {
-  font-family: monospace;
-  font-size: 9px;
-  color: var(--muted);
-  letter-spacing: 2px;
-  margin-bottom: 4px;
-}
-
-/* ── Consistent gap on tog-list ─────────────────────────────────────────── */
-.tog-list { gap: 4px; }
-
+.pc.active.cooking { animation:pulse-glow 2s ease-in-out infinite; }
 </style>
 </head>
 <body>
 
 <div class="header">
-  <div>
+  <div class="header-left">
     <div class="h-tag">≫≫BadaZz89≪≪</div>
-    <pre class="h-name" style="font-size:9px;line-height:1.4;letter-spacing:.5px;font-family:monospace;font-weight:400;">╔════════ ⚡ ════════╗
-║ .:[$w€€T ⊷ k6a]:. ║
-║    &gt;P3rF-M⊙d&lt;     ║
-╚════════ ⚡ ════════╝</pre>
-    <div class="h-sub">sweet_k6a//sweet2  </div>
+    <div class="h-brand">╔══════ ⚡ ══════╗<br>║ .:[k6a-perf]:. ║<br>╚══════ ⚡ ══════╝</div>
+    <div class="h-sub">sweet_k6a//sweet2</div>
   </div>
-  <div style="display:flex;flex-direction:column;align-items:center;gap:5px;">
-    <div class="badge balanced" id="badge">BALANCED</div>
-    <span style="font-family:monospace;font-size:10px;letter-spacing:1px;" id="inf-pid">—</span>
-    <span id="ws-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin-top:2px;" title="Verbindungsstatus"></span>
-    <!-- Profil-Indikator-Balken -->
-    <div id="profile-bar" style="width:80px;height:2px;border-radius:2px;background:rgba(255,152,0,.5);transition:background .4s ease,box-shadow .4s ease;box-shadow:0 0 6px rgba(255,152,0,.4);"></div>
+  <div class="header-right">
+    <div class="badge daily" id="badge">⚙️ DAILY</div>
+    <span id="inf-pid">—</span>
+    <span id="ws-dot"></span>
+    <div id="profile-bar" style="background:rgba(255,152,0,.5);box-shadow:0 0 6px rgba(255,152,0,.4);"></div>
   </div>
 </div>
 
-
 <div class="body">
 
-  <div id="comp-banner" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(255,23,68,.12);border:1px solid rgba(255,23,68,.4);border-radius:8px;font-family:monospace;font-size:10px;color:#ff4444;letter-spacing:.5px;text-align:center;">
-    🔥 COOKING MODE — Thermal Disabler active · Silber-Cores optional offline · Higher Battery Drain👹
+  <div id="cook-banner" class="cook-banner" style="display:none;">
+    🔥 COOKING — Thermal disabled · Silver optional offline · Higher battery drain
   </div>
 
-  <!-- 1. SERVICE LOG -->
-  <div class="section" style="margin-top:1px;">
-    <div class="sec-title">>Servic3 L∅g:</div>
-    <div class="log-box" id="log-box" style="max-height:180px;">Wird geladen…</div>
-  </div>
-
-  <!-- 2. PROFIL -->
-  <div class="section">
-    <div class="sec-title">>Pr∅fileZ:</div>
+  <div class="card" style="padding-bottom:12px;">
+    <div class="card-title">Profile</div>
     <div class="profiles">
       <div class="pc daily" id="pc-daily" onclick="applyProfile('daily')">
         <div class="pc-icon">⚙️</div>
         <div class="pc-name">Daily</div>
         <div class="pc-sub">EAS on · schedutil</div>
+        <div class="pc-live">
+          <div class="pc-live-item"><span class="lc">MHz</span> <span class="lv" id="pc-daily-mhz">—</span></div>
+          <div class="pc-live-item"><span class="lc">°C</span> <span class="lv" id="pc-daily-temp">—</span></div>
+        </div>
       </div>
       <div class="pc cooking" id="pc-cooking" onclick="applyProfile('cooking')">
         <div class="pc-icon">🔥</div>
-        <div class="pc-name">COOK1NG</div>
+        <div class="pc-name">Cooking</div>
         <div class="pc-sub">EAS off · schedutil+</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 3. INFO LINKS + TWEAKS RECHTS -->
-  <div class="section">
-    <div class="sec-title">>Syst3m:</div>
-    <div class="system-grid">
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <div class="system-col-label">>1NFO</div>
-        <div class="info-chip" style="margin-top:0;">
-        <!-- Android — volle Zeile -->
-        <div class="chip-row">
-          <div class="chip-item" style="flex:1;min-width:0;">
-            <span class="chip-lbl">ANDROID</span>
-            <span class="chip-val yellow" id="inf-android">—</span>
-          </div>
-        </div>
-        <div class="chip-divider"></div>
-        <!-- Kernel — volle Zeile -->
-        <div class="chip-row">
-          <div class="chip-item" style="flex:1;min-width:0;">
-            <span class="chip-lbl">KERNEL</span>
-            <span class="chip-val cyan" id="inf-kernel">—</span>
-            <span style="font-family:monospace;font-size:9px;color:var(--muted);display:block;margin-top:1px;word-break:break-all;" id="inf-kernel-real"></span>
-          </div>
-        </div>
-        <div class="chip-divider"></div>
-        <!-- Akku + Uptime -->
-        <div class="chip-row">
-          <div class="chip-item">
-            <span class="chip-lbl">AKKU</span>
-            <span class="chip-val yellow" id="inf-bat">—</span>
-          </div>
-          <div class="chip-item">
-            <span class="chip-lbl">UPTIME</span>
-            <span class="chip-val purple" id="inf-uptime">—</span>
-          </div>
-        </div>
-        <div class="chip-divider"></div>
-        <!-- Akku Temp + CPU Temp + Ping -->
-        <div class="chip-row">
-          <div class="chip-item">
-            <span class="chip-lbl">AKKU TEMP</span>
-            <span class="chip-val yellow" id="inf-bat-temp">—</span>
-          </div>
-          <div class="chip-item">
-            <span class="chip-lbl">CPU TEMP</span>
-            <span class="chip-val cyan" id="inf-cpu-temp">—</span>
-          </div>
-        </div>
-        <div class="chip-row">
-          <div class="chip-item">
-            <span class="chip-lbl">LIVE PING</span>
-            <span class="chip-val cyan" id="inf-ping">—</span>
-          </div>
-          <div class="chip-item"></div>
-        </div>
-        <div class="chip-divider"></div>
-        <!-- CPU/GPU/Net Metriken — v7.30 -->
-        <div class="chip-row">
-          <div class="chip-item">
-            <span class="chip-lbl">CPU SIL</span>
-            <span class="chip-val cyan" id="inf-cpu-sil">—</span>
-          </div>
-          <div class="chip-item">
-            <span class="chip-lbl">CPU GOLD</span>
-            <span class="chip-val cyan" id="inf-cpu-gold">—</span>
-          </div>
-        </div>
-        <div class="chip-row">
-          <div class="chip-item">
-            <span class="chip-lbl">GPU</span>
-            <span class="chip-val cyan" id="inf-gpu">—</span>
-          </div>
-          <div class="chip-item">
-            <span class="chip-lbl">NETZ</span>
-            <span class="chip-val" id="inf-net-type">—</span>
-          </div>
-        </div>
-        </div>
-        <div id="ascii-box" class="ascii-box" style="display:none;"></div>
-      </div>
-      <!-- Rechte Spalte: Tweaks + Settings + Control -->
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <div>
-          <div class="system-col-label">>4CTIVE TW3AKS</div>
-          <div class="log-box" id="tweaks-box" style="max-height:140px;line-height:1.9;">Wird geladen…</div>
-        </div>
-
-        <!-- Control Kachel: 2x2 Buttons + Cache/RAM + Status -->
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-            <span style="font-family:monospace;font-size:9px;color:var(--muted);letter-spacing:2px;">>C∅NTR∅L</span>
-            <span style="flex:1;height:1px;background:var(--border);"></span>
-            <span id="restart-status" style="font-family:monospace;font-size:9px;color:var(--muted);min-height:12px;"></span>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-            <button class="prog-btn" id="restart-btn"
-              style="padding:8px;font-size:11px;
-                     background:rgba(180,40,40,.18);border-color:rgba(200,60,60,.4);
-                     color:var(--red);letter-spacing:1.5px;"
-              onclick="restartController()">
-              ⟳ RESTART
-            </button>
-            <button class="prog-btn" id="pause-btn"
-              style="padding:8px;font-size:11px;
-                     background:rgba(180,130,0,.18);border-color:rgba(200,160,0,.4);
-                     color:var(--yellow);letter-spacing:1.5px;"
-              onclick="togglePause()">
-              ⏸ PAUSE
-            </button>
-            <button class="prog-btn" id="cache-btn" style="padding:8px;font-size:11px;">🗑 CACHE</button>
-            <button class="prog-btn" id="ram-btn" style="padding:8px;font-size:11px;">🧹 RAM</button>
-          </div>
-          <div style="margin-top:8px;">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-              <span style="font-family:monospace;font-size:9px;color:var(--muted);letter-spacing:1px;flex-shrink:0;">C4CHE</span>
-              <div class="prog-track" style="flex:1;margin:0;"><div class="prog-bar low" id="cache-bar" style="width:0%"></div></div>
-              <span style="font-family:monospace;font-size:10px;font-weight:700;color:var(--yellow);flex-shrink:0;" id="cache-val">—</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-              <span style="font-family:monospace;font-size:9px;color:var(--muted);letter-spacing:1px;flex-shrink:0;">R4M</span>
-              <div class="prog-track" style="flex:1;margin:0;"><div class="prog-bar low" id="ram-bar" style="width:0%"></div></div>
-              <span style="font-family:monospace;font-size:10px;font-weight:700;color:var(--yellow);flex-shrink:0;" id="ram-val">—</span>
-            </div>
-            <div class="cache-last" id="cache-last" style="margin-top:2px;"></div>
-          </div>
+        <div class="pc-live">
+          <div class="pc-live-item"><span class="lc">MHz</span> <span class="lv" id="pc-cooking-mhz">—</span></div>
+          <div class="pc-live-item"><span class="lc">°C</span> <span class="lv" id="pc-cooking-temp">—</span></div>
         </div>
       </div>
     </div>
   </div>
+
+  <div class="card">
+    <div class="acc-header" id="acc-log-hdr" onclick="toggleAccordion('acc-log')">
+      <span class="acc-caret">▶</span> Log
+    </div>
+    <div class="acc-body" id="acc-log">
+      <div class="acc-inner">
+        <div class="log-box" id="log-box">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="padding:10px 14px;">
+    <div class="card-title">Temperature</div>
+    <div class="temp-row">
+      <div class="temp-big cool" id="temp-cpu-val">—</div>
+      <div class="temp-info">
+        <div class="temp-bar-track">
+          <div class="temp-bar-fill" id="temp-cpu-bar" style="width:0%"></div>
+        </div>
+        <div class="temp-details">
+          <span>CPU</span>
+          <span id="temp-cpu-pct">0%</span>
+        </div>
+      </div>
+    </div>
+    <div class="temp-sparkline-wrap">
+      <canvas id="temp-sparkline" width="388" height="28"></canvas>
+    </div>
+    <div class="temp-sub">
+      <span>🔋 <span class="ts-val" id="temp-bat-pct">—</span></span>
+      <span>🌡️ <span class="ts-val" id="temp-bat-val">—</span></span>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+
+  <div class="card" style="margin:0;">
+    <div class="card-title">System</div>
+    <div class="sys-grid">
+      <div class="sys-item">
+        <span class="sys-lbl">CPU Silver</span>
+        <span class="sys-val cyan" id="sys-cpu-sil">—</span>
+      </div>
+      <div class="sys-item">
+        <span class="sys-lbl">CPU Gold</span>
+        <span class="sys-val gold" id="sys-cpu-gold">—</span>
+      </div>
+      <div class="sys-item">
+        <span class="sys-lbl">GPU</span>
+        <span class="sys-val cyan" id="sys-gpu">—</span>
+      </div>
+      <div class="sys-item">
+        <span class="sys-lbl">Network</span>
+        <span class="sys-val grn" id="sys-net">—</span>
+      </div>
+    </div>
+    <div class="sec-divider" style="margin:6px 0;"></div>
+    <div class="sys-row">
+      <span class="sys-lbl">Ping</span>
+      <span class="sys-val" id="sys-ping" style="font-size:10px;">—</span>
+    </div>
+    <div class="sys-row" style="margin-top:4px;">
+      <span class="sys-lbl">Uptime</span>
+      <span class="sys-val" id="sys-uptime" style="font-size:10px;">—</span>
+    </div>
+    <div class="sec-divider" style="margin:6px 0;"></div>
+    <div style="display:flex;flex-direction:column;gap:3px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="sys-lbl">RAM</span>
+        <span class="sys-val" id="sys-ram-val" style="font-size:10px;">—</span>
+      </div>
+      <div class="sys-bar-track"><div class="sys-bar-fill low" id="sys-ram-bar" style="width:0%"></div></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="sys-lbl">Cache</span>
+        <span class="sys-val" id="sys-cache-val" style="font-size:10px;">—</span>
+      </div>
+      <div class="sys-bar-track"><div class="sys-bar-fill low" id="sys-cache-bar" style="width:0%"></div></div>
+    </div>
+    <div class="sys-lbl" id="cache-last" style="margin-top:3px;font-size:7px;"></div>
+  </div>
+
+  <div class="card" style="margin:0;">
+    <div class="card-title">ACTIV3:</div>
+    <div id="tweaks-box">
+      <div class="tweak-item lo">⏳ Loading…</div>
+    </div>
+  </div>
+
+  </div>
+
+  <div class="card">
+    <div class="card-title">Control</div>
+    <div class="ctrl-grid">
+      <button class="ctrl-btn restart" id="restart-btn" onclick="restartController()">⟳ RESTART</button>
+      <button class="ctrl-btn pause" id="pause-btn" onclick="togglePause()">⏸ PAUSE</button>
+      <button class="ctrl-btn" id="cache-btn" onclick="cleanCache()">🗑 CACHE</button>
+      <button class="ctrl-btn" id="ram-btn" onclick="cleanRAM()">🧹 RAM</button>
+    </div>
+    <div class="ctrl-status" id="restart-status"></div>
+  </div>
+
+  <div class="card">
+    <div class="acc-header open" id="acc-perapp-hdr" onclick="toggleAccordion('acc-perapp')">
+      <span class="acc-caret">▶</span> Per-App Profiles
+    </div>
+    <div class="acc-body open" id="acc-perapp">
+      <div class="acc-inner">
+        <div style="font-family:monospace;font-size:8px;color:var(--muted);margin-bottom:8px;line-height:1.5;">
+          Auto-switch profile when specific apps launch
+        </div>
+        <div id="perapp-list"></div>
+        <button class="pa-add" onclick="addApp()">＋ Add App Profile</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="acc-header open" id="acc-freeze-hdr" onclick="toggleAccordion('acc-freeze')">
+      <span class="acc-caret">▶</span> App Freeze
+    </div>
+    <div class="acc-body open" id="acc-freeze">
+      <div class="acc-inner">
+        <div id="freeze-list"></div>
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <button class="fr-add-rule" style="flex:1" onclick="addFreezeRule()">＋ Add Freeze Rule</button>
+          <button class="fr-add-rule" style="width:48px;flex:none;font-size:15px;" onclick="_freezeLoaded=false;loadFreezeConf();toast('↺ Reloaded')">↺</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
 <div class="toast" id="toast"></div>
-  <!-- 5. PER-APP PROFILE -->
-  <div class="section">
-    <div class="sec-title">>P3r-4pp Pr∅files:</div>
-    <div style="font-family:monospace;font-size:9px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
-      Auto-switch profile when specific apps launch
-    </div>
-    <div id="perapp-list"></div>
-    <button class="pa-add" onclick="addApp()">＋ Add App Profile</button>
-  </div>
-
-    
-  <!-- 6. APP FREEZE -->
-  <div class="section">
-    <div class="sec-title">>4pp Fr33ze:</div>
-    <div style="font-family:monospace;font-size:9px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
- 
-   </div>
-    <div id="freeze-list"></div>
-    <div style="display:flex;gap:8px;margin-top:4px;">
-      <button class="fr-add-rule" style="flex:1" onclick="addFreezeRule()">＋ Add Freeze-Rules</button>
-      <button class="fr-add-rule" style="width:48px;flex:none;font-size:16px;" onclick="_freezeLoaded=false;loadFreezeConf();toast('↺ Regeln neu geladen')" title="Neu laden">↺</button>
-    </div>
-  </div>
-
-  
-
 
 <script>
 var MOD    = '/data/adb/modules/Bad4zz89_k6a_tweaks';
@@ -406,12 +370,9 @@ var MANUAL = MOD + '/config/manual_profile';
 var CTRIG  = MOD + '/config/clean_cache_now';
 var RTRIG  = MOD + '/config/clean_ram_now';
 
-// ── Schreiben via ksu.exec ────────────────────────────────────────────────────
 function run(cmd) {
     try { ksu.exec(cmd); } catch(e) {}
 }
-
-// Fix #1: XSS-Escaping für innerHTML-Inhalte aus data.txt
 function esc(s) {
     return String(s)
         .replace(/&/g, '&amp;')
@@ -419,9 +380,6 @@ function esc(s) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
 }
-
-// Fix #2: saveConf — val via printf escapen um Shell-Injection zu verhindern
-// Schreibt: printf '%s' 'val' in Config statt direkter sed-Interpolation
 function saveConf(key, val) {
     var safeVal = String(val).replace(/'/g, "'\\''");
     run('grep -q "^' + key + '=" "' + CONF + '" 2>/dev/null' +
@@ -429,27 +387,97 @@ function saveConf(key, val) {
         " || printf '%s\\n' '" + key + "=" + safeVal + "' >> \"" + CONF + '"');
 }
 
-
-// ── ASCII Logo ────────────────────────────────────────────────────────────────
-// Lädt ascii.conf aus webroot (k6a-controller kopiert es beim Start rein)
-function loadAsciiLogo() {
-    fetch('ascii.txt?_=' + Date.now())
-        .then(function(r) { return r.ok ? r.text() : ''; })
-        .then(function(txt) {
-            var box = document.getElementById('ascii-box');
-            if (!box) return;
-            var content = (txt || '').trim();
-            if (content) {
-                box.textContent = content;
-                box.style.display = 'block';
-            }
-        })
-        .catch(function() {});
+function drawSparkline(canvasId, data) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas || !data || data.length < 2) return;
+    var ctx = canvas.getContext('2d');
+    var w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    var min = Math.min.apply(null, data);
+    var max = Math.max.apply(null, data);
+    var range = max - min || 1;
+    var points = data.map(function(v, i) {
+        var x = (i / (data.length - 1)) * (w - 4) + 2;
+        var y = h - 4 - ((v - min) / range) * (h - 8);
+        return { x: x, y: y, v: v };
+    });
+    ctx.beginPath(); ctx.moveTo(points[0].x, h);
+    points.forEach(function(p) { ctx.lineTo(p.x, p.y); });
+    ctx.lineTo(points[points.length-1].x, h);
+    ctx.closePath();
+    var grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, 'rgba(229,57,53,.35)');
+    grad.addColorStop(1, 'rgba(229,57,53,.02)');
+    ctx.fillStyle = grad; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y);
+    points.slice(1).forEach(function(p) { ctx.lineTo(p.x, p.y); });
+    ctx.strokeStyle = '#e53935'; ctx.lineWidth = 1.5; ctx.stroke();
+    var last = points[points.length-1];
+    ctx.beginPath(); ctx.arc(last.x, last.y, 2.5, 0, Math.PI*2);
+    ctx.fillStyle = '#ff1744'; ctx.fill();
 }
 
-// ── Lesen via fetch('data.txt') ───────────────────────────────────────────────
-// service.sh schreibt data.txt ins webroot alle 30s
-// Parser: nur die ERSTE '=' pro Zeile als Trenner
+function toggleAccordion(id) {
+    var body = document.getElementById(id);
+    var hdr = document.getElementById(id + '-hdr');
+    if (!body || !hdr) return;
+    var isOpen = body.classList.toggle('open');
+    hdr.classList.toggle('open', isOpen);
+}
+
+var _tt;
+var _profTs = 0;
+var PROF_LOCK_MS = 0;
+var _profClickTs = 0;
+var PROF_CLICK_IGNORE = 6000;
+function toast(msg) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('on');
+    clearTimeout(_tt);
+    _tt = setTimeout(function() { el.classList.remove('on'); }, 2500);
+}
+
+function setProfileUI(p) {
+    p = (p || 'daily').trim();
+    ['daily', 'cooking'].forEach(function(x) {
+        var el = document.getElementById('pc-' + x);
+        if (el) el.classList.toggle('active', x === p);
+    });
+    var b = document.getElementById('badge');
+    b.className = 'badge ' + p;
+    b.textContent = p === 'cooking' ? '🔥 COOKING' : '⚙️ DAILY';
+    var banner = document.getElementById('cook-banner');
+    if (banner) banner.style.display = p === 'cooking' ? 'block' : 'none';
+    var barEl = document.getElementById('profile-bar');
+    if (barEl) {
+        var c = p === 'cooking' ? '#ff1744' : '#ff9800';
+        var g = p === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)';
+        barEl.style.background = c;
+        barEl.style.boxShadow = '0 0 8px ' + g;
+    }
+}
+
+function applyProfile(p) {
+    _profTs = Date.now();
+    _profClickTs = Date.now();
+    window._lastProf = p;
+    window._pendingProf = p;
+    run("printf '%s' '" + p + "' > \"" + MANUAL + "\"");
+    setProfileUI(p);
+    toast('Profil: ' + p.toUpperCase());
+    setTimeout(function() {
+        loadData(function(d) {
+            var actual = (d.manual_profile || d.profile || 'daily').trim();
+            if (window._pendingProf && actual !== window._pendingProf) {
+                toast('⚠ Debounce active — switch in ~' + (15 - Math.round((Date.now() - _profClickTs) / 1000)) + 's');
+            }
+            window._pendingProf = null;
+            setProfileUI(actual);
+        });
+    }, 6000);
+}
+
 function _parseData(txt) {
     var d = {};
     (txt || '').split('\n').forEach(function(line) {
@@ -475,335 +503,250 @@ function _fetchWithRetry(cb, attempt) {
         .then(function(r) { return r.ok ? r.text() : Promise.reject('not ok'); })
         .then(function(txt) {
             var d = _parseData(txt);
-            if (d.profile || d.pid) {
-                cb(d);
-            } else {
-                _fetchWithRetry(cb, 2);
-            }
+            if (d.profile || d.pid) { cb(d); }
+            else { _fetchWithRetry(cb, 2); }
         })
-        .catch(function() {
-            _fetchWithRetry(cb, 2);
-        });
+        .catch(function() { _fetchWithRetry(cb, 2); });
 }
 
 function loadData(cb) {
     _fetchWithRetry(cb, 1);
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-var _tt;
-var _profTs = 0;
-var PROF_LOCK_MS = 0;        // WS liefert echten State — kein Lock nötig
-var _profClickTs = 0;        // Fix Bug 3: WS-State nach Klick 6s ignorieren
-var PROF_CLICK_IGNORE = 6000;
-function toast(msg) {
-    var el = document.getElementById('toast');
-    el.textContent = msg;
-    el.classList.add('on');
-    clearTimeout(_tt);
-    _tt = setTimeout(function() { el.classList.remove('on'); }, 2500);
-}
-
-// ── Profil UI ─────────────────────────────────────────────────────────────────
-function setProfileUI(p) {
-    p = (p || 'daily').trim();
-    ['daily', 'cooking'].forEach(function(x) {
-        var el = document.getElementById('pc-' + x);
-        if (el) el.classList.toggle('active', x === p);
-    });
-    var b = document.getElementById('badge');
-    b.className   = 'badge ' + p;
-    b.textContent = p === 'cooking' ? '🔥 C00k1nG' : '⚙️ DAILY';
-    b.title = '';
-    var banner = document.getElementById('comp-banner');
-    if (banner) banner.style.display = p === 'cooking' ? 'block' : 'none';
-    // Indikator-Balken sofort aktualisieren
-    var barEl = document.getElementById('profile-bar');
-    if (barEl) {
-        var c = p === 'cooking' ? '#ff1744' : '#ff9800';
-        var g = p === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)';
-        barEl.style.background = c;
-        barEl.style.boxShadow  = '0 0 8px ' + g;
-    }
-}
-
-function applyProfile(p) {
-    if (p === 'cooking') {
-        var th = document.getElementById('tog-thermal');
-        if (th && !th.checked) toast('⚠ Thermal Disabler empfohlen für Cooking!');
-    }
-    _profTs = Date.now();
-    _profClickTs = Date.now();
-    window._lastProf = p;
-    window._pendingProf = p;
-    run("printf '%s' '" + p + "' > \"" + MANUAL + "\"");
-    setProfileUI(p);
-    toast('Profil: ' + p.toUpperCase());
-    setTimeout(function(){
-        loadData(function(d){
-            var actual = (d.manual_profile || d.profile || 'daily').trim();
-            if (window._pendingProf && actual !== window._pendingProf) {
-                toast('⚠ Debounce aktiv — Wechsel in ~' + (15 - Math.round((Date.now() - _profClickTs) / 1000)) + 's');
-            }
-            window._pendingProf = null;
-            setProfileUI(actual);
-        });
-    }, 6000);
-}
-
-
-
-
 var _pidMiss = 0;
-// ── Anzeige aus data.txt befüllen ─────────────────────────────────────────────
+var _prevTemps = [];
+
 function applyData(d) {
-    // requestAnimationFrame — alle DOM-Updates gesammelt in einem Frame
-    // Verhindert Layout-Thrashing durch viele einzelne DOM-Manipulationen
     requestAnimationFrame(function() {
-    // Info-Kacheln
-    if (d.kernel)  document.getElementById('inf-kernel').textContent  = d.kernel.trim();
-    if (d.kernel_real) {
-        var realEl = document.getElementById('inf-kernel-real');
-        var real = d.kernel_real.trim();
-        if (real && real !== d.kernel.trim()) {
-            realEl.textContent = '⚠ real: ' + real;
-            realEl.style.color = 'var(--yellow)';
-        }
-    }
-    if (d.android) document.getElementById('inf-android').textContent = d.android.trim();
-    if (d.bat) {
-        document.getElementById('inf-bat').textContent = d.bat.trim();
-    }
-    // Battery temp — separate element, with color coding
-    if (d.bat_temp !== undefined) {
-        var bt = parseFloat(d.bat_temp) || 0;
-        var btEl = document.getElementById('inf-bat-temp');
-        if (btEl) {
-            btEl.textContent = bt > 0 ? bt.toFixed(1) + '°C' : '—';
-            btEl.style.color = bt >= 45 ? 'var(--red)'
-                             : bt >= 40 ? 'var(--yellow)'
-                             : 'var(--green)';
-        }
-    }
-    // CPU temp — from data.txt 'temp' key
-    if (d.temp !== undefined) {
-        var ct = parseInt(d.temp) || 0;
-        var ctEl = document.getElementById('inf-cpu-temp');
-        if (ctEl) {
-            ctEl.textContent = ct > 0 ? ct + '°C' : '—';
-            ctEl.style.color = ct >= 85 ? 'var(--red)'
-                             : ct >= 70 ? 'var(--yellow)'
-                             : 'var(--green)';
-        }
-    }
-    if (d.uptime)  document.getElementById('inf-uptime').textContent  = d.uptime.trim();
-
-
-    var pe = document.getElementById('inf-pid');
-    var activeProf = (d.manual_profile || d.profile || 'daily').trim();
-    var profColor = activeProf === 'cooking' ? '#ff1744' : '#ff9800';
-    var profGlow  = activeProf === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)';
-    if (d.pid && d.pid.trim() && d.pid.trim() !== "0") {
-        _pidMiss = 0;
-        pe.textContent = "PID " + d.pid.trim();
-        pe.style.color = profColor;
-    } else {
-        _pidMiss++;
-        if (_pidMiss >= 3) {
-            pe.textContent = "gestoppt";
-            pe.style.color = "var(--red)";
-        }
-    }
-    // Indikator-Balken: Farbe + Glow je nach Profil
-    var bar = document.getElementById('profile-bar');
-    if (bar) {
-        bar.style.background  = profColor;
-        bar.style.boxShadow   = '0 0 8px ' + profGlow;
-    }
-
-
-    // Ping — ping_stale=1 kommt vom Controller (v7.26) wenn STATE=GAMING/COMPETITIVE
-    if (d.ping) {
-        var ping   = d.ping.trim();
-        var pingEl = document.getElementById('inf-ping');
-        if (ping && ping !== 'timeout' && ping !== '') {
-            var ms = parseFloat(ping);
-            pingEl.textContent = ms + ' ms';
-            pingEl.className   = 'ping-big ' + (ms < 60 ? 'good' : ms < 120 ? 'ok' : 'bad');
-        } else {
-            pingEl.textContent = 'Timeout';
-            pingEl.className   = 'ping-big bad';
-        }
-        var isStale = (d.ping_stale && d.ping_stale.trim() === '1')
-                   || (activeProf === 'cooking');
-        pingEl.style.opacity = isStale ? '0.45' : '1';
-        pingEl.title = isStale ? '~ Ping wird im Cooking-Modus nicht aktualisiert' : '';
-    }
-
-    // Cache — Fortschrittsbalken (controller schickt GB als float)
-    var gb = parseFloat(d.cache_kb) || 0;
-    var cacheText = gb <= 0 ? '—' : gb.toFixed(2) + ' GB';
-    document.getElementById('cache-val').textContent = cacheText;
-    var cacheBar = document.getElementById('cache-bar');
-    if (cacheBar) {
-        var cachePct = Math.min(100, Math.round(gb / 2 * 100));  // 2GB = 100%
-        cacheBar.style.width = cachePct + '%';
-        cacheBar.className = 'prog-bar ' + (cachePct < 40 ? 'low' : cachePct < 75 ? 'mid' : 'high');
-    }
-
-    // RAM — Fortschrittsbalken (controller schickt GB als float)
-    if (d.ram_used && d.ram_total) {
-        var ru = parseFloat(d.ram_used)  || 0;
-        var rt = parseFloat(d.ram_total) || 1;
-        var ramPct = Math.min(100, Math.round(ru / rt * 100));
-        document.getElementById('ram-val').textContent = ru.toFixed(2) + ' / ' + rt.toFixed(2) + ' GB';
-        var ramBar = document.getElementById('ram-bar');
-        if (ramBar) {
-            ramBar.style.width = ramPct + '%';
-            ramBar.className = 'prog-bar ' + (ramPct < 50 ? 'low' : ramPct < 80 ? 'mid' : 'high');
-        }
-    }
-
-
-    // Letztes Cleaning
-    if (d.last_clean && d.last_clean.trim())
-        document.getElementById('cache-last').textContent = '✓ last: ' + d.last_clean.trim();
-
-    // Log — Fix #1: esc() für XSS-Schutz, Fix #7: scrollTop=0 für Auto-Scroll
-    if (d.log && d.log.trim()) {
-        var lines = d.log.split('\x01').filter(function(l) { return l.trim(); });
-        lines = lines.slice(-30).reverse();
-        var lb = document.getElementById('log-box');
-        lb.innerHTML = lines.map(function(l) {
-            l = esc(l.trim());
-            // v7.31 Log Level System — [INFO]/[WARN]/[ERROR]/[DBG] Farbkodierung
-            if (l.includes('[ERROR]'))      return '<div style="color:var(--red);font-weight:700;">'    + l + '</div>';
-            if (l.includes('[WARN]'))       return '<div style="color:var(--yellow);">'                 + l + '</div>';
-            if (l.includes('[DBG]'))        return '<div style="color:var(--muted);font-size:10px;">'   + l + '</div>';
-            if (l.includes('COOKING'))  return '<div style="color:var(--red);">' + l + '</div>';
-            if (l.includes('DAILY'))    return '<div class="lo">'  + l + '</div>';
-            if (l.includes('THERMAL'))      return '<div style="color:var(--yellow);">' + l + '</div>';
-            if (l.includes('recovered'))    return '<div class="lo">'  + l + '</div>';
-            if (l.match(/error|fehler/i))   return '<div class="le">'  + l + '</div>';
-            return '<div>' + l + '</div>';
-        }).join('');
-        lb.scrollTop = 0;
-    }
-
-    (function() {
-        var cooking = (d.profile || 'daily').trim() === 'cooking';
-        var hpOn = d.conf_cpu_hotplug && d.conf_cpu_hotplug.trim() === '1';
-        var tweaks = [];
-        tweaks.push({ c:'lo', t:'✅ I/O mq-deadline (UFS blk-mq)' });
-        tweaks.push({ c:'lo', t:'✅ ZRAM lz4 / page-cluster=0' });
-        tweaks.push({ c:'lo', t:'✅ LMK minfree tuned' });
-        tweaks.push({ c:'lo', t:'✅ LRU_GEN enabled' });
-        if (cooking) {
-            tweaks.push({ c:'lw', t:'🔥 Thermal: daemons killed + trips raised' });
-            tweaks.push({ c:'lw', t:'🔥 LMH/DCVS/PMIC5 disabled' });
-            tweaks.push({ c:'lo', t:'✅ WiFi PS watchdog active' });
-            tweaks.push({ c:'lo', t:'✅ TCP BBR + low_latency + QoS' });
-            tweaks.push({ c:'lo', t:'✅ uclamp.min=60% top-app' });
-            tweaks.push({ c:'lw', t:'🔥 Gold min=2169MHz | Silver min=1497MHz' });
-            tweaks.push({ c:'lw', t:'🔥 GPU locked 800MHz | EAS=0' });
-            tweaks.push({ c:'li', t:'🧊 Battery spoof @25°C' });
-            if (hpOn) tweaks.push({ c:'lw', t:'⚡ CPU Hotplug: Silver offline' });
-        } else {
-            tweaks.push({ c:'lo', t:'✅ Thermal: daemons active' });
-            tweaks.push({ c:'lo', t:'✅ GPU 267-800MHz (idler ON)' });
-            tweaks.push({ c:'lo', t:'✅ Silver 576-1804 | Gold 652-2304' });
-            tweaks.push({ c:'lo', t:'✅ EAS=1 | uclamp_min=128' });
-        }
-        tweaks.push({ c:'li', t:'✅ HWUI render_ahead=4ms' });
-        tweaks.push({ c:'li', t:'✅ QTI inputopts 0.6ms slop' });
-        document.getElementById('tweaks-box').innerHTML = tweaks.map(function(t) {
-            return '<div class="' + t.c + '">' + esc(t.t) + '</div>';
-        }).join('');
-    })();
-
-
-
-    if ((Date.now() - _profTs) > PROF_LOCK_MS) {
-        var p = (d.manual_profile || d.profile || 'daily').trim();
-        if (p) setProfileUI(p);
-    }
-    if (d.freeze && !_freezeLoaded) {
-        var rawFreeze = d.freeze.replace(/\|/g, '\n');
-        loadFreezeFromData(rawFreeze);
-        _freezeLoaded = true;
-    }
-
-    // ── v7.30 Metriken: CPU/GPU Frequenzen + Netztyp ──────────────────────────
-    // CPU Silver Frequenz
-    if (d.cpu_sil_mhz !== undefined) {
-        var silEl = document.getElementById('inf-cpu-sil');
-        if (silEl) {
-            var smhz = parseInt(d.cpu_sil_mhz) || 0;
-            silEl.textContent = smhz > 0 ? smhz + ' MHz' : '—';
-            silEl.style.color = smhz >= 1700 ? 'var(--yellow)' : 'var(--cyan)';
-        }
-    }
-    // CPU Gold Frequenz
-    if (d.cpu_gold_mhz !== undefined) {
-        var goldEl = document.getElementById('inf-cpu-gold');
-        if (goldEl) {
+        if (d.cpu_gold_mhz !== undefined) {
             var gmhz = parseInt(d.cpu_gold_mhz) || 0;
-            goldEl.textContent = gmhz > 0 ? gmhz + ' MHz' : '—';
-            goldEl.style.color = gmhz >= 2200 ? 'var(--yellow)' : 'var(--cyan)';
+            var dailyEl = document.getElementById('pc-daily-mhz');
+            var cookEl = document.getElementById('pc-cooking-mhz');
+            if (dailyEl) dailyEl.textContent = gmhz > 0 ? gmhz + ' MHz' : '—';
+            if (cookEl) cookEl.textContent = gmhz > 0 ? gmhz + ' MHz' : '—';
         }
-    }
-    // GPU Frequenz + Auslastung
-    if (d.gpu_mhz !== undefined) {
-        var gpuEl = document.getElementById('inf-gpu');
-        if (gpuEl) {
+        if (d.temp !== undefined) {
+            var ct = parseInt(d.temp) || 0;
+            var ctStr = ct > 0 ? ct + '°C' : '—';
+            var dailyTemp = document.getElementById('pc-daily-temp');
+            var cookTemp = document.getElementById('pc-cooking-temp');
+            if (dailyTemp) dailyTemp.textContent = ctStr;
+            if (cookTemp) cookTemp.textContent = ctStr;
+        }
+
+        if (d.temp !== undefined) {
+            var ct = parseInt(d.temp) || 0;
+            var ctEl = document.getElementById('temp-cpu-val');
+            if (ctEl) {
+                ctEl.textContent = ct > 0 ? ct + '°' : '—';
+                ctEl.className = 'temp-big ' + (ct >= 85 ? 'hot' : ct >= 70 ? 'warm' : 'cool');
+            }
+            var barEl = document.getElementById('temp-cpu-bar');
+            var pctEl = document.getElementById('temp-cpu-pct');
+            var pct = Math.min(100, Math.round((ct / 100) * 100));
+            if (barEl) barEl.style.width = pct + '%';
+            if (pctEl) pctEl.textContent = pct + '%';
+            if (ct > 0) {
+                _prevTemps.push(ct);
+                if (_prevTemps.length > 40) _prevTemps.shift();
+                drawSparkline('temp-sparkline', _prevTemps);
+            }
+        }
+        if (d.temps && _prevTemps.length === 0) {
+            var hist = String(d.temps).split(',').map(Number).filter(function(v) { return v > 0; });
+            if (hist.length >= 2) {
+                _prevTemps = hist;
+                drawSparkline('temp-sparkline', _prevTemps);
+            }
+        }
+
+        if (d.bat !== undefined) {
+            document.getElementById('temp-bat-pct').textContent = d.bat.trim();
+        }
+        if (d.bat_temp !== undefined) {
+            var bt = parseFloat(d.bat_temp) || 0;
+            var btEl = document.getElementById('temp-bat-val');
+            if (btEl) btEl.textContent = bt > 0 ? bt.toFixed(1) + '°C' : '—';
+        }
+
+        if (d.cpu_sil_mhz !== undefined) {
+            var smhz = parseInt(d.cpu_sil_mhz) || 0;
+            var silEl = document.getElementById('sys-cpu-sil');
+            if (silEl) {
+                silEl.textContent = smhz > 0 ? smhz + ' MHz' : '—';
+                silEl.style.color = smhz >= 1700 ? 'var(--yellow)' : 'var(--red)';
+            }
+        }
+        if (d.cpu_gold_mhz !== undefined) {
+            var gmhz = parseInt(d.cpu_gold_mhz) || 0;
+            var goldEl = document.getElementById('sys-cpu-gold');
+            if (goldEl) {
+                goldEl.textContent = gmhz > 0 ? gmhz + ' MHz' : '—';
+                goldEl.style.color = gmhz >= 2200 ? 'var(--yellow)' : 'var(--red)';
+            }
+        }
+        if (d.gpu_mhz !== undefined) {
             var gpmhz = parseInt(d.gpu_mhz) || 0;
             var gpbusy = d.gpu_busy ? parseInt(d.gpu_busy) || 0 : 0;
-            // gpu_mhz=0 kann bedeuten: GPU idle/power-collapsed — zeige trotzdem an
-            if (gpmhz > 0) {
-                gpuEl.textContent = gpmhz + ' MHz (' + gpbusy + '%)';
-                gpuEl.style.color = gpmhz >= 700 ? 'var(--yellow)' : 'var(--cyan)';
-            } else if (gpbusy > 0) {
-                gpuEl.textContent = 'idle (' + gpbusy + '%)';
-                gpuEl.style.color = 'var(--muted)';
-            } else {
-                gpuEl.textContent = 'idle';
-                gpuEl.style.color = 'var(--muted)';
+            var gpuEl = document.getElementById('sys-gpu');
+            if (gpuEl) {
+                if (gpmhz > 0) { gpuEl.textContent = gpmhz + ' MHz (' + gpbusy + '%)'; gpuEl.style.color = gpmhz >= 700 ? 'var(--yellow)' : 'var(--red)'; }
+                else if (gpbusy > 0) { gpuEl.textContent = 'idle (' + gpbusy + '%)'; gpuEl.style.color = 'var(--muted)'; }
+                else { gpuEl.textContent = 'idle'; gpuEl.style.color = 'var(--muted)'; }
             }
         }
-    }
-    // Netztyp Badge
-    if (d.net_type !== undefined) {
-        var ntEl = document.getElementById('inf-net-type');
-        if (ntEl) {
+        if (d.net_type !== undefined) {
             var nt = (d.net_type || 'lte').trim();
-            ntEl.textContent = nt === 'wifi' ? '📶 WiFi' : '📡 LTE';
-            ntEl.style.color = nt === 'wifi' ? 'var(--green)' : 'var(--yellow)';
+            var ntEl = document.getElementById('sys-net');
+            if (ntEl) {
+                ntEl.textContent = nt === 'wifi' ? '📶 WiFi' : '📡 LTE';
+                ntEl.style.color = nt === 'wifi' ? 'var(--green)' : 'var(--yellow)';
+            }
         }
-    }
-    // Pause-Button State synchronisieren
-    if (d.pause !== undefined) {
-        updatePauseBtn(d.pause.trim() === '1');
-    }
-    }); // Ende requestAnimationFrame
+        if (d.ping) {
+            var ping = d.ping.trim();
+            var pingEl = document.getElementById('sys-ping');
+            if (ping && ping !== 'timeout' && ping !== '') {
+                var ms = parseFloat(ping);
+                pingEl.textContent = ms + ' ms';
+                pingEl.style.color = ms < 60 ? 'var(--green)' : ms < 120 ? 'var(--yellow)' : 'var(--red)';
+            } else {
+                pingEl.textContent = 'Timeout';
+                pingEl.style.color = 'var(--red)';
+            }
+            var isStale = (d.ping_stale && d.ping_stale.trim() === '1')
+                       || ((d.profile || 'daily').trim() === 'cooking');
+            pingEl.style.opacity = isStale ? '0.45' : '1';
+            pingEl.title = isStale ? '~ Ping not updated in Cooking' : '';
+        }
+        if (d.uptime) document.getElementById('sys-uptime').textContent = d.uptime.trim();
+
+        if (d.ram_used && d.ram_total) {
+            var ru = parseFloat(d.ram_used) || 0;
+            var rt = parseFloat(d.ram_total) || 1;
+            var ramPct = Math.min(100, Math.round(ru / rt * 100));
+            document.getElementById('sys-ram-val').textContent = ru.toFixed(1) + ' / ' + rt.toFixed(1) + ' GB';
+            var ramBar = document.getElementById('sys-ram-bar');
+            if (ramBar) {
+                ramBar.style.width = ramPct + '%';
+                ramBar.className = 'sys-bar-fill ' + (ramPct < 50 ? 'low' : ramPct < 80 ? 'mid' : 'high');
+            }
+        }
+        var gb = parseFloat(d.cache_kb) || 0;
+        document.getElementById('sys-cache-val').textContent = gb <= 0 ? '—' : gb.toFixed(2) + ' GB';
+        var cacheBar = document.getElementById('sys-cache-bar');
+        if (cacheBar) {
+            var cachePct = Math.min(100, Math.round(gb / 2 * 100));
+            cacheBar.style.width = cachePct + '%';
+            cacheBar.className = 'sys-bar-fill ' + (cachePct < 40 ? 'low' : cachePct < 75 ? 'mid' : 'high');
+        }
+        if (d.last_clean && d.last_clean.trim())
+            document.getElementById('cache-last').textContent = '✓ last: ' + d.last_clean.trim();
+
+        var pe = document.getElementById('inf-pid');
+        var activeProf = (d.manual_profile || d.profile || 'daily').trim();
+        var profColor = activeProf === 'cooking' ? '#ff1744' : '#ff9800';
+        if (d.pid && d.pid.trim() && d.pid.trim() !== "0") {
+            _pidMiss = 0;
+            pe.textContent = "PID " + d.pid.trim();
+            pe.style.color = profColor;
+        } else {
+            _pidMiss++;
+            if (_pidMiss >= 3) { pe.textContent = "stopped"; pe.style.color = "var(--red)"; }
+        }
+
+        var bar = document.getElementById('profile-bar');
+        if (bar) {
+            bar.style.background = profColor;
+            bar.style.boxShadow = '0 0 8px ' + (activeProf === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)');
+        }
+
+        (function() {
+            var cooking = (d.profile || 'daily').trim() === 'cooking';
+            var hpOn = d.conf_cpu_hotplug && d.conf_cpu_hotplug.trim() === '1';
+            var tweaks = [];
+            tweaks.push({ c:'lo', t:'✅ I/O mq-deadline (UFS blk-mq)' });
+            tweaks.push({ c:'lo', t:'✅ ZRAM lz4 / page-cluster=0' });
+            tweaks.push({ c:'lo', t:'✅ LMK minfree tuned' });
+            tweaks.push({ c:'lo', t:'✅ LRU_GEN enabled' });
+            if (cooking) {
+                tweaks.push({ c:'lw', t:'🔥 Thermal: daemons killed + trips raised' });
+                tweaks.push({ c:'lw', t:'🔥 LMH/DCVS/PMIC5 disabled' });
+                tweaks.push({ c:'lo', t:'✅ WiFi PS watchdog active' });
+                tweaks.push({ c:'lo', t:'✅ TCP BBR + low_latency + QoS' });
+                tweaks.push({ c:'lo', t:'✅ uclamp.min=60% top-app' });
+                tweaks.push({ c:'lw', t:'🔥 Gold min=2169MHz | Silver min=1497MHz' });
+                tweaks.push({ c:'lw', t:'🔥 GPU locked 800MHz | EAS=0' });
+                tweaks.push({ c:'li', t:'🧊 Battery spoof @25°C' });
+                if (hpOn) tweaks.push({ c:'lw', t:'⚡ CPU Hotplug: Silver offline' });
+            } else {
+                tweaks.push({ c:'lo', t:'✅ Thermal: daemons active' });
+                tweaks.push({ c:'lo', t:'✅ GPU 267-800MHz (idler ON)' });
+                tweaks.push({ c:'lo', t:'✅ Silver 576-1804 | Gold 652-2304' });
+                tweaks.push({ c:'lo', t:'✅ EAS=1 | uclamp_min=128' });
+            }
+            tweaks.push({ c:'li', t:'✅ HWUI render_ahead=4ms' });
+            tweaks.push({ c:'li', t:'✅ QTI inputopts 0.6ms slop' });
+            var tb = document.getElementById('tweaks-box');
+            if (tb) tb.innerHTML = tweaks.map(function(t) {
+                return '<div class="tweak-item ' + t.c + '">' + esc(t.t) + '</div>';
+            }).join('');
+        })();
+
+        if ((Date.now() - _profTs) > PROF_LOCK_MS) {
+            var p = (d.manual_profile || d.profile || 'daily').trim();
+            if (p) setProfileUI(p);
+        }
+
+        if (d.freeze && !_freezeLoaded) {
+            var rawFreeze = d.freeze.replace(/\|/g, '\n');
+            loadFreezeFromData(rawFreeze);
+            _freezeLoaded = true;
+        }
+
+        if (d.pause !== undefined) {
+            updatePauseBtn(d.pause.trim() === '1');
+        }
+
+        if (d.log && d.log.trim()) {
+            var lines = d.log.split('\x01').filter(function(l) { return l.trim(); });
+            lines = lines.slice(-20).reverse();
+            var lb = document.getElementById('log-box');
+            if (lb) {
+                lb.innerHTML = lines.map(function(l) {
+                    l = esc(l.trim());
+                    if (l.includes('[ERROR]'))      return '<div style="color:var(--red);font-weight:700;">' + l + '</div>';
+                    if (l.includes('[WARN]'))       return '<div style="color:var(--yellow);">' + l + '</div>';
+                    if (l.includes('[DBG]'))        return '<div style="color:var(--muted);font-size:9px;">' + l + '</div>';
+                    if (l.includes('COOKING')) return '<div style="color:var(--red);">' + l + '</div>';
+                    if (l.includes('DAILY'))   return '<div style="color:var(--green);">' + l + '</div>';
+                    if (l.includes('THERMAL'))      return '<div style="color:var(--yellow);">' + l + '</div>';
+                    if (l.includes('recovered'))    return '<div style="color:var(--green);">' + l + '</div>';
+                    if (l.match(/error|fehler/i))   return '<div style="color:var(--red);">' + l + '</div>';
+                    return '<div>' + l + '</div>';
+                }).join('');
+                lb.scrollTop = 0;
+            }
+        }
+
+    });
 }
 
-// ── Cache Cleaner ─────────────────────────────────────────────────────────────
 var _cacheBusy = false;
-var _ramBusy   = false;
+var _ramBusy = false;
 
 function cleanCache() {
     if (_cacheBusy) return;
     _cacheBusy = true;
     var btn = document.getElementById('cache-btn');
-    btn.textContent  = '⏳ Wird geleert…';
+    btn.textContent = '⏳…';
     btn.style.opacity = '0.5';
     run('touch "' + CTRIG + '"');
-    toast('Cache-Reinigung gestartet…');
-    // v7.26: clean_cache läuft async im Controller → 4s reichen für UI-Reset
+    toast('Cleaning cache…');
     setTimeout(function() {
         _cacheBusy = false;
         btn = document.getElementById('cache-btn');
-        btn.textContent   = '🗑 CACHE';
+        btn.textContent = '🗑 CACHE';
         btn.style.opacity = '1';
         loadData(function(d) { applyData(d); });
     }, 4000);
@@ -813,29 +756,28 @@ function cleanRAM() {
     if (_ramBusy) return;
     _ramBusy = true;
     var btn = document.getElementById('ram-btn');
-    btn.textContent   = '⏳ Wird bereinigt…';
+    btn.textContent = '⏳…';
     btn.style.opacity = '0.5';
     run('touch "' + RTRIG + '"');
-    toast('RAM-Bereinigung gestartet…');
+    toast('Cleaning RAM…');
     setTimeout(function() {
         _ramBusy = false;
         btn = document.getElementById('ram-btn');
-        btn.textContent   = '🧹 RAM';
+        btn.textContent = '🧹 RAM';
         btn.style.opacity = '1';
         loadData(function(d) { applyData(d); });
     }, 5000);
 }
 
-// ── Controller Restart ────────────────────────────────────────────────────────
 var _restartBusy = false;
 function restartController() {
     if (_restartBusy) return;
     _restartBusy = true;
-    var btn    = document.getElementById('restart-btn');
+    var btn = document.getElementById('restart-btn');
     var status = document.getElementById('restart-status');
-    btn.textContent   = '⟳ …';
+    btn.textContent = '⟳ …';
     btn.style.opacity = '0.5';
-    status.textContent = 'Wird neu gestartet…';
+    status.textContent = 'Restarting…';
     status.style.color = 'var(--yellow)';
     run('kill $(cat "' + MOD + '/run/controller.pid" 2>/dev/null) 2>/dev/null || true');
     setTimeout(function() {
@@ -844,47 +786,42 @@ function restartController() {
             applyData(d);
             status.textContent = '✅ PID ' + newPid;
             status.style.color = 'var(--green)';
-            btn.textContent    = '⟳ RESTART';
-            btn.style.opacity  = '1';
-            _restartBusy       = false;
+            btn.textContent = '⟳ RESTART';
+            btn.style.opacity = '1';
+            _restartBusy = false;
             setTimeout(function() { status.textContent = ''; }, 5000);
         });
     }, 8000);
 }
 
-// ── Pause Toggle ──────────────────────────────────────────────────────────────
 var _pauseBusy = false;
 function togglePause() {
     if (_pauseBusy) return;
     _pauseBusy = true;
-    var btn    = document.getElementById('pause-btn');
+    var btn = document.getElementById('pause-btn');
     var status = document.getElementById('restart-status');
     var isPaused = btn.dataset.paused === '1';
-
     btn.style.opacity = '0.5';
     status.style.color = 'var(--yellow)';
-
     if (isPaused) {
-        // Resume: PAUSE_FILE löschen
         run('rm -f "' + MOD + '/run/pause"');
-        status.textContent = '▶ Modul wird fortgesetzt…';
+        status.textContent = '▶ Resuming…';
         setTimeout(function() {
             loadData(function(d) {
                 applyData(d);
-                status.textContent = '✅ Modul aktiv';
+                status.textContent = '✅ Active';
                 status.style.color = 'var(--green)';
                 _pauseBusy = false;
                 setTimeout(function() { status.textContent = ''; }, 4000);
             });
         }, 5000);
     } else {
-        // Pause: PAUSE_FILE anlegen
         run('touch "' + MOD + '/run/pause"');
-        status.textContent = '⏸ Modul wird pausiert…';
+        status.textContent = '⏸ Pausing…';
         setTimeout(function() {
             loadData(function(d) {
                 applyData(d);
-                status.textContent = '⏸ Modul pausiert';
+                status.textContent = '⏸ Paused';
                 status.style.color = 'var(--yellow)';
                 _pauseBusy = false;
                 setTimeout(function() { status.textContent = ''; }, 4000);
@@ -893,35 +830,26 @@ function togglePause() {
     }
 }
 
-// Pause-Button-State aus data.txt aktualisieren
 function updatePauseBtn(paused) {
     var btn = document.getElementById('pause-btn');
     if (!btn) return;
     if (paused) {
-        btn.textContent         = '▶ RESUME';
-        btn.style.background    = 'rgba(40,180,40,.18)';
-        btn.style.borderColor   = 'rgba(60,200,60,.4)';
-        btn.style.color         = 'var(--green)';
-        btn.style.opacity       = '1';
-        btn.dataset.paused      = '1';
+        btn.textContent = '▶ RESUME';
+        btn.style.background = 'rgba(40,180,40,.18)';
+        btn.style.borderColor = 'rgba(60,200,60,.4)';
+        btn.style.color = 'var(--green)';
+        btn.style.opacity = '1';
+        btn.dataset.paused = '1';
     } else {
-        btn.textContent         = '⏸ PAUSE';
-        btn.style.background    = 'rgba(180,130,0,.18)';
-        btn.style.borderColor   = 'rgba(200,160,0,.4)';
-        btn.style.color         = 'var(--yellow)';
-        btn.style.opacity       = '1';
-        btn.dataset.paused      = '0';
+        btn.textContent = '⏸ PAUSE';
+        btn.style.background = 'rgba(180,130,0,.18)';
+        btn.style.borderColor = 'rgba(200,160,0,.4)';
+        btn.style.color = 'var(--yellow)';
+        btn.style.opacity = '1';
+        btn.dataset.paused = '0';
     }
 }
 
-function initCacheBtn() {
-    var cb = document.getElementById('cache-btn');
-    if (cb) cb.addEventListener('click', cleanCache);
-    var rb = document.getElementById('ram-btn');
-    if (rb) rb.addEventListener('click', cleanRAM);
-}
-
-// ── Per-App Profile ───────────────────────────────────────────────────────────
 var APPNAMES = {
     'com.miHoYo.GenshinImpact'         : 'Genshin Impact',
     'com.tencent.ig'                    : 'PUBG Mobile',
@@ -958,12 +886,12 @@ function renderPerApp() {
     Object.keys(paData).forEach(function(pkg) {
         var prof = paData[pkg];
         var name = APPNAMES[pkg] || pkg.split('.').pop();
-        var row  = document.createElement('div');
+        var row = document.createElement('div');
         row.className = 'pa-item';
         var nd = document.createElement('div');
         nd.style.flex = '1';
-        nd.innerHTML  = '<div class="pa-name">' + name + '</div>'
-                      + '<div class="pa-pkg">' + pkg + '</div>';
+        nd.innerHTML = '<div class="pa-name">' + name + '</div>'
+                     + '<div class="pa-pkg">' + pkg + '</div>';
         var sel = document.createElement('select');
         sel.className = 'pa-sel';
         [['cooking','🔥 Cooking'],['daily','⚙️ Daily']].forEach(function(v) {
@@ -978,13 +906,13 @@ function renderPerApp() {
             toast(name + ' → ' + sel.value);
         };
         var del = document.createElement('button');
-        del.className   = 'pa-del';
+        del.className = 'pa-del';
         del.textContent = '✕';
         del.onclick = function() {
             delete paData[pkg];
             savePerApp();
             renderPerApp();
-            toast('App entfernt');
+            toast('Removed');
         };
         row.append(nd, sel, del);
         list.appendChild(row);
@@ -992,17 +920,14 @@ function renderPerApp() {
 }
 
 function addApp() {
-    var pkg = prompt('Package-Name:\nz.B. com.example.game');
-    if (!pkg || pkg.indexOf('.') < 0) { toast('Ungültiger Name'); return; }
+    var pkg = prompt('Package name:\ne.g. com.example.game');
+    if (!pkg || pkg.indexOf('.') < 0) { toast('Invalid name'); return; }
     paData[pkg.trim()] = 'daily';
     savePerApp();
     renderPerApp();
-    toast('App hinzugefügt');
+    toast('App added');
 }
 
-// ── App Freeze Engine ─────────────────────────────────────────────────────────
-// freeze.conf: trigger_pkg=freeze_pkg1,freeze_pkg2,...
-// frData: { 'com.activision...': ['com.whatsapp', 'com.instagram.android'] }
 var FREEZE_CONF = MOD + '/config/freeze.conf';
 var frData = {};
 var _freezeLoaded = false;
@@ -1038,25 +963,19 @@ function renderFreeze() {
     list.innerHTML = '';
     var triggers = Object.keys(frData);
     if (triggers.length === 0) {
-        list.innerHTML = '<div class="fr-empty">Keine Freeze-Regeln — tippe auf + um eine zu erstellen</div>';
+        list.innerHTML = '<div class="fr-empty">No freeze rules — tap + to create one</div>';
         return;
     }
     triggers.forEach(function(trigger) {
         var targets = frData[trigger];
         var triggerName = APPNAMES[trigger] || trigger.split('.').pop();
-
         var rule = document.createElement('div');
         rule.className = 'fr-rule';
-
-        // Trigger header
         var hdr = document.createElement('div');
         hdr.className = 'fr-trigger';
-        hdr.innerHTML =
-            '<span class="fr-trigger-ice">⚡</span>' +
-            '<div style="flex:1">' +
-              '<div class="fr-trigger-name">' + triggerName + '</div>' +
-              '<div class="fr-trigger-pkg">' + trigger + '</div>' +
-            '</div>';
+        hdr.innerHTML = '<span class="fr-trigger-ice">⚡</span>'
+                      + '<div style="flex:1"><div class="fr-trigger-name">' + triggerName + '</div>'
+                      + '<div class="fr-trigger-pkg">' + trigger + '</div></div>';
         var delTrigger = document.createElement('button');
         delTrigger.className = 'fr-trigger-del';
         delTrigger.textContent = '✕';
@@ -1064,24 +983,19 @@ function renderFreeze() {
             delete frData[t];
             saveFreeze();
             renderFreeze();
-            toast('Regel entfernt');
+            toast('Rule removed');
         }; })(trigger);
         hdr.appendChild(delTrigger);
         rule.appendChild(hdr);
-
-        // Target list
         var targetWrap = document.createElement('div');
         targetWrap.className = 'fr-targets';
-
         targets.forEach(function(pkg, idx) {
             var pkgName = APPNAMES[pkg] || pkg.split('.').pop();
             var row = document.createElement('div');
             row.className = 'fr-target';
-            row.innerHTML =
-                '<span class="fr-target-ice">❄</span>' +
-                '<span style="flex:1">' + pkgName +
-                  '<span style="color:var(--muted);font-size:9px;margin-left:6px;">' + pkg + '</span>' +
-                '</span>';
+            row.innerHTML = '<span class="fr-target-ice">❄</span>'
+                          + '<span style="flex:1">' + pkgName
+                          + '<span style="color:var(--muted);font-size:8px;margin-left:6px;">' + pkg + '</span></span>';
             var delTarget = document.createElement('button');
             delTarget.className = 'fr-target-del';
             delTarget.textContent = '✕';
@@ -1090,25 +1004,23 @@ function renderFreeze() {
                 if (frData[t].length === 0) delete frData[t];
                 saveFreeze();
                 renderFreeze();
-                toast('App aus Freeze entfernt');
+                toast('App removed from freeze');
             }; })(trigger, idx);
             row.appendChild(delTarget);
             targetWrap.appendChild(row);
         });
-
-        // Add target button
         var addBtn = document.createElement('button');
         addBtn.className = 'fr-add-target';
-        addBtn.textContent = '＋ Add App Freeze ';
+        addBtn.textContent = '＋ Add App';
         addBtn.onclick = (function(t) { return function() {
-            var pkg = prompt('Package-Name der einzufrorenen App:\nz.B. com.whatsapp');
-            if (!pkg || pkg.indexOf('.') < 0) { toast('Ungültiger Name'); return; }
+            var pkg = prompt('Package to freeze:\ne.g. com.whatsapp');
+            if (!pkg || pkg.indexOf('.') < 0) { toast('Invalid'); return; }
             pkg = pkg.trim();
-            if (frData[t].indexOf(pkg) >= 0) { toast('Bereits vorhanden'); return; }
+            if (frData[t].indexOf(pkg) >= 0) { toast('Already exists'); return; }
             frData[t].push(pkg);
             saveFreeze();
             renderFreeze();
-            toast('❄ ' + pkg + ' hinzugefügt');
+            toast('❄ ' + pkg + ' added');
         }; })(trigger);
         targetWrap.appendChild(addBtn);
         rule.appendChild(targetWrap);
@@ -1117,124 +1029,18 @@ function renderFreeze() {
 }
 
 function addFreezeRule() {
-    var trigger = prompt('Package-Name der AUSLÖSER-App:\nWenn diese App startet, werden andere eingefroren.\nz.B. com.activision.callofduty.shooter');
-    if (!trigger || trigger.indexOf('.') < 0) { toast('Ungültiger Name'); return; }
+    var trigger = prompt('TRIGGER app package:\nWhen this app starts, others get frozen.\ne.g. com.activision.callofduty.shooter');
+    if (!trigger || trigger.indexOf('.') < 0) { toast('Invalid'); return; }
     trigger = trigger.trim();
-    if (frData[trigger]) { toast('Regel existiert bereits'); return; }
-    var target = prompt('Package-Name der einzufrorenden App:\nz.B. com.whatsapp');
-    if (!target || target.indexOf('.') < 0) { toast('Ungültiger Name'); return; }
+    if (frData[trigger]) { toast('Rule already exists'); return; }
+    var target = prompt('App to freeze:\ne.g. com.whatsapp');
+    if (!target || target.indexOf('.') < 0) { toast('Invalid'); return; }
     frData[trigger] = [target.trim()];
     saveFreeze();
     renderFreeze();
-    toast('❄ Freeze-Regel erstellt');
+    toast('❄ Freeze rule created');
 }
 
-// ── WebSocket connection with data.txt fallback ───────────────────────────────
-var _ws = null;
-var _wsConnected = false;
-var _pollTimer = null;
-var _wsRetryTimer = null;
-var WS_URL = 'ws://127.0.0.1:7070';
-
-function connectWebSocket() {
-    if (_ws && (_ws.readyState === WebSocket.CONNECTING ||
-                _ws.readyState === WebSocket.OPEN)) return;
-
-    try {
-        _ws = new WebSocket(WS_URL);
-    } catch(e) {
-        startPollingFallback();
-        return;
-    }
-
-    _ws.onopen = function() {
-        _wsConnected = true;
-        stopPollingFallback();
-        updateWsIndicator(true);
-        toast('🔴 Live — Daemon verbunden');
-    };
-
-    _ws.onmessage = function(ev) {
-        try {
-            var msg = JSON.parse(ev.data);
-            if (msg.type === 'state_snapshot' && msg.data) {
-                // Fix Bug 3: WS-State nach Profil-Klick 6s ignorieren
-                // Verhindert dass WS alten State den neuen Button überschreibt
-                if ((Date.now() - _profClickTs) < PROF_CLICK_IGNORE) {
-                    // Nur data.txt lesen, WS-profile ignorieren
-                    loadData(function(d) { applyData(d); });
-                    return;
-                }
-                // k6a-daemon v5.7+ kennt alle Keys — merge mit data.txt
-                // Priorität: WS gewinnt wenn Wert nicht null/undefined/leer
-                // data.txt gewinnt wenn WS-Wert null ist (Key noch nicht vom Daemon gelesen)
-                loadData(function(full) {
-                    // Start mit data.txt als Basis (vollständig)
-                    var merged = {};
-                    Object.keys(full).forEach(function(k) { merged[k] = full[k]; });
-                    // WS-Werte überschreiben nur wenn nicht null/undefined/leer
-                    var ws = msg.data;
-                    if (ws) {
-                        Object.keys(ws).forEach(function(k) {
-                            var v = ws[k];
-                            if (v !== undefined && v !== null && v !== '')
-                                merged[k] = String(v);
-                        });
-                    }
-                    applyData(merged);
-                });
-            }
-        } catch(e) {
-            loadData(function(d) { applyData(d); });
-        }
-    };
-
-    _ws.onclose = function() {
-        _wsConnected = false;
-        updateWsIndicator(false);
-        // Retry WebSocket after 5s, meanwhile fall back to polling
-        startPollingFallback();
-        _wsRetryTimer = setTimeout(connectWebSocket, 5000);
-    };
-
-    _ws.onerror = function() {
-        _wsConnected = false;
-        updateWsIndicator(false);
-    };
-}
-
-function startPollingFallback() {
-    if (_pollTimer) return;
-    // Poll data.txt every 3s — controller writes every 3s (every tick)
-    loadData(function(d) { applyData(d); });
-    _pollTimer = setInterval(function() {
-        loadData(function(d) { applyData(d); });
-    }, 3000);
-}
-
-function stopPollingFallback() {
-    if (_pollTimer) {
-        clearInterval(_pollTimer);
-        _pollTimer = null;
-    }
-}
-
-function updateWsIndicator(connected) {
-    var dot = document.getElementById('ws-dot');
-    if (!dot) return;
-    if (connected) {
-        dot.style.background = 'var(--green)';
-        dot.style.boxShadow  = '0 0 6px rgba(0,230,118,.6)';
-        dot.title = '● Live — WebSocket verbunden';
-    } else {
-        dot.style.background = 'var(--muted)';
-        dot.style.boxShadow  = 'none';
-        dot.title = '○ Polling — data.txt Fallback (3s)';
-    }
-}
-
-// ── Freeze Conf Loader ────────────────────────────────────────────────────────
-// freeze.conf direkt lesen — unabhängig vom Polling-Zyklus
 function loadFreezeConf() {
     run('cp "' + FREEZE_CONF + '" "' + MOD + '/webroot/freeze_dump.txt" 2>/dev/null || echo "" > "' + MOD + '/webroot/freeze_dump.txt"');
     setTimeout(function() {
@@ -1249,15 +1055,81 @@ function loadFreezeConf() {
     }, 600);
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+var _ws = null;
+var _wsConnected = false;
+var _pollTimer = null;
+var _wsRetryTimer = null;
+var WS_URL = 'ws://127.0.0.1:7070';
+
+function connectWebSocket() {
+    if (_ws && (_ws.readyState === WebSocket.CONNECTING || _ws.readyState === WebSocket.OPEN)) return;
+    try { _ws = new WebSocket(WS_URL); } catch(e) { startPollingFallback(); return; }
+    _ws.onopen = function() {
+        _wsConnected = true;
+        stopPollingFallback();
+        updateWsIndicator(true);
+        toast('🔴 Live — WebSocket connected');
+    };
+    _ws.onmessage = function(ev) {
+        try {
+            var msg = JSON.parse(ev.data);
+            if (msg.type === 'state_snapshot' && msg.data) {
+                if ((Date.now() - _profClickTs) < PROF_CLICK_IGNORE) {
+                    loadData(function(d) { applyData(d); });
+                    return;
+                }
+                loadData(function(full) {
+                    var merged = {};
+                    Object.keys(full).forEach(function(k) { merged[k] = full[k]; });
+                    var ws = msg.data;
+                    if (ws) {
+                        Object.keys(ws).forEach(function(k) {
+                            var v = ws[k];
+                            if (v !== undefined && v !== null && v !== '') merged[k] = String(v);
+                        });
+                    }
+                    applyData(merged);
+                });
+            }
+        } catch(e) { loadData(function(d) { applyData(d); }); }
+    };
+    _ws.onclose = function() {
+        _wsConnected = false;
+        updateWsIndicator(false);
+        startPollingFallback();
+        _wsRetryTimer = setTimeout(connectWebSocket, 5000);
+    };
+    _ws.onerror = function() { _wsConnected = false; updateWsIndicator(false); };
+}
+
+function startPollingFallback() {
+    if (_pollTimer) return;
+    loadData(function(d) { applyData(d); });
+    _pollTimer = setInterval(function() { loadData(function(d) { applyData(d); }); }, 3000);
+}
+
+function stopPollingFallback() {
+    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+}
+
+function updateWsIndicator(connected) {
+    var dot = document.getElementById('ws-dot');
+    if (!dot) return;
+    if (connected) {
+        dot.style.background = 'var(--green)';
+        dot.style.boxShadow = '0 0 6px rgba(0,230,118,.6)';
+        dot.title = '● Live — WebSocket connected';
+    } else {
+        dot.style.background = 'var(--muted)';
+        dot.style.boxShadow = 'none';
+        dot.title = '○ Polling — data.txt (3s)';
+    }
+}
+
 window.onload = function() {
-    initCacheBtn();
-    loadAsciiLogo();
     loadFreezeConf();
     loadData(function(d) { applyData(d); });
     connectWebSocket();
-
-    // Polling pausieren wenn Tab/App im Hintergrund — spart Battery
     document.addEventListener('visibilitychange', function() {
         if (document.visibilityState === 'visible') {
             loadData(function(d) { applyData(d); });
@@ -1268,4 +1140,5 @@ window.onload = function() {
     });
 };
 </script>
+</body>
 </html>
