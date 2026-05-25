@@ -329,10 +329,10 @@ body {
   </div>
 
   <div class="card">
-    <div class="acc-header open" id="acc-perapp-hdr" onclick="toggleAccordion('acc-perapp')">
+    <div class="acc-header" id="acc-perapp-hdr" onclick="toggleAccordion('acc-perapp')">
       <span class="acc-caret">▶</span> Per-App Profiles
     </div>
-    <div class="acc-body open" id="acc-perapp">
+    <div class="acc-body" id="acc-perapp">
       <div class="acc-inner">
         <div style="font-family:monospace;font-size:8px;color:var(--muted);margin-bottom:8px;line-height:1.5;">
           Auto-switch profile when specific apps launch
@@ -344,10 +344,10 @@ body {
   </div>
 
   <div class="card">
-    <div class="acc-header open" id="acc-freeze-hdr" onclick="toggleAccordion('acc-freeze')">
+    <div class="acc-header" id="acc-freeze-hdr" onclick="toggleAccordion('acc-freeze')">
       <span class="acc-caret">▶</span> App Freeze
     </div>
-    <div class="acc-body open" id="acc-freeze">
+    <div class="acc-body" id="acc-freeze">
       <div class="acc-inner">
         <div id="freeze-list"></div>
         <div style="display:flex;gap:8px;margin-top:4px;">
@@ -599,7 +599,7 @@ function applyData(d) {
             var nt = (d.net_type || 'lte').trim();
             var ntEl = document.getElementById('sys-net');
             if (ntEl) {
-                ntEl.textContent = nt === 'wifi' ? '📶 WiFi' : '📡 LTE';
+                ntEl.textContent = nt === 'wifi' ? 'WiFi' : 'LTE';
                 ntEl.style.color = nt === 'wifi' ? 'var(--green)' : 'var(--yellow)';
             }
         }

@@ -7,3 +7,6 @@ description=Gaming Optimizer — SM7150/sweet_k6a | 2-Mode (daily/cooking) | COD
 minMagisk=25200
 minApi=33
 updateJson=https://raw.githubusercontent.com/vandalsquad187/k6a-optimizer/main/update.json
+webuiIcon=icon/icon.png
+actionIcon=icon/icon.png
+banner=icon/icon.png
