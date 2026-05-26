@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a Optimizer — Diagnose Script v9.5
+# k6a Optimizer — Diagnose Script v9.6
 # Nutzung: su -c "sh /data/adb/modules/Bad4zz89_k6a_tweaks/bin/k6a-diagnose.sh"
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -143,34 +143,37 @@ if [ -d /data/adb/modules/adreno_gpu_driver ]; then
 fi
 
 # ── KGSL KOMPLETT-DUMP (für Adreno 0819.0 Treibertest) ─────────────────────────
+_kgsl_dump() {
+    local dir="$1" prefix="$2" entry val
+    for entry in "$dir"/*; do
+        [ -e "$entry" ] || continue
+        local name="${entry##*/}"
+        [ -d "$entry" ] && { _kgsl_dump "$entry" "${prefix}${name}/"; continue; }
+        [ -r "$entry" ] || continue
+        val=$(cat "$entry" 2>/dev/null | tr '\n' ' ' | head -c 120 || echo 'N/A')
+        echo "  ${prefix}${name} = $val"
+    done
+}
 echo "[ KGSL KOMPLETT-DUMP ]"
-for entry in $(find "$GPU" -maxdepth 2 -type f 2>/dev/null | sort); do
-    fname="${entry##*/}"
-    case "$fname" in
-        gpu_busy_percentage|gpu_model|gpu_model_number|snapshots|wake_mask|gpu_busy|gpu_load)
-            echo "  ${entry#$GPU/} = $(cat "$entry" 2>/dev/null || echo 'N/A')" ;;
-        devfreq/cur_freq|devfreq/available_frequencies|devfreq/available_governors|devfreq/polling_interval|devfreq/trans_stat)
-            echo "  ${entry#$GPU/} = $(cat "$entry" 2>/dev/null || echo 'N/A')" ;;
-    esac
-done
+_kgsl_dump "$GPU" ""
 echo ""
 
 # ── UNBEKANNTE KGSL-NODES (Neuzugänge durch Adreno Treiber) ───────────────────
 echo "[ KGSL — unbekannte / neue Nodes ]"
-for entry in $(find "$GPU" -maxdepth 2 -type f 2>/dev/null | sort); do
-    fname="${entry##*/}"
-    parent="${entry%/*}"; parent="${parent##*/}"
-    case "$fname" in
+for entry in /sys/class/kgsl/kgsl-3d0/*; do
+    [ -f "$entry" ] || continue
+    name="${entry##*/}"
+    case "$name" in
         min_pwrlevel|max_pwrlevel|thermal_pwrlevel|num_pwrlevels|gpu_freq_table|\
         force_clk_on|force_bus_on|force_rail_on|bus_split|throttling|\
         gpu_available_frequencies|gpu_busy_percentage|gpu_model|gpu_model_number|\
         gpu_busy|gpu_load|snapshots|wake_mask|gpu_clock|gpu_preemption_stride|\
         gpu_preemption_latency|adreno_idler_active|adreno_idler_idleworkload|\
-        devfreq/*|sched_*|gpuclk|gpubusy|gpu_llc_*|gpu_rt_busy|gpu_rt_level|\
-        pwrscale|cluster*|sp_*) continue ;;
+        devfreq|pwrscale|gpuclk|gpubusy|gpu_llc_*|gpu_rt_busy|gpu_rt_level|\
+        cluster*|sp_*|sched_*|poison*) continue ;;
     esac
     val=$(cat "$entry" 2>/dev/null | tr '\n' ' ' | head -c 120 || echo 'N/A')
-    echo "  ${entry#$GPU/} = $val"
+    echo "  ${name} = $val"
 done
 echo ""
 

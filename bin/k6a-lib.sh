@@ -202,11 +202,11 @@ cpu_hotplug_online_all() {
 cpu_hotplug_offline_gold() {
     [ "$FEATURE_HOTPLUG" = "0" ] && return 0
     local c
-    for c in 4 5 6 7; do
+    for c in 6 7; do
         [ -f /sys/devices/system/cpu/cpu${c}/online ] || continue
         echo 0 > /sys/devices/system/cpu/cpu${c}/online 2>/dev/null || true
     done
-    _log "CPU Hotplug: Gold cores 4-7 offline"
+    _log "CPU Hotplug: Gold cores 6-7 offline"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

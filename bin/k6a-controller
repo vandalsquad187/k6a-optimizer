@@ -230,7 +230,7 @@ enter_daily() {
     _can_enter || return 0
     log "\u2192 DAILY"; _cfg_load_cache
     cpu_hotplug_online_all
-    cpu_set "schedutil" "300000" "1248000" "652800" "1651200"
+    cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
     cpu_hotplug_offline_gold
     gpu_daily; io_daily; sched_daily; vm_daily; lmk_default; zram_daily
     lru_gen_enable; sf_daily; wakelock_block
@@ -246,8 +246,8 @@ enter_daily() {
     start logd 2>/dev/null || true; unfreeze_all
     THERMAL_CAPPED=0; _RIL_PINNED=0
     printf '%s' "daily" > "$PROFILE"; STATE="DAILY"
-    log "DAILY: Silver 300-1248MHz | Gold offline | GPU 140-267MHz Lock | trips 55°C | WLAN ON"
-    ( sleep 2; cpu_set "schedutil" "300000" "1248000" "652800" "1651200" ) &
+    log "DAILY: Silver 576-1248MHz | Gold offline | GPU 140-267MHz Lock | trips 55°C | WLAN ON"
+    ( sleep 2; cpu_set "schedutil" "576000" "1248000" "652800" "1651200" ) &
 }
 
 enter_cooking() {
@@ -422,28 +422,42 @@ while true; do
             }
         }
 
-        [ $(( TICK % 3 )) -eq 0 ] && {
-            _cm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 9999999)
-            _cmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
-            _frozen=0
-            if [ "$_cm" -lt "500000" ]; then
-                _frozen=1
-            elif [ "$_cm" = "$_cmin" ] && [ "$_cm" -lt "1600000" ]; then
-                _frozen=1
-            fi
-            if [ "$_frozen" = "1" ]; then
-                warn "CPU FREEZE (Silver min=${_cmin} max=${_cm}) \u2014 re-apply"
-                for _te in $(pgrep -f "thermal-engine" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
-                thermal_full_disable; sleep 0.5
-                lmh_disable
-                cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
-                w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "650000000"
-                w $GPU/devfreq/max_freq "800000000"; w $GPU/force_clk_on "1"
-                echo "0" > "$GPU/throttling" 2>/dev/null || true
-                w /sys/class/power_supply/battery/system_temp_level "0"
-                apply_irq_affinity; log "CPU+GPU+IRQ recovered"
-            fi
-        }
+    [ $(( TICK % 3 )) -eq 0 ] && {
+        _cm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 9999999)
+        _cmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
+        _frozen=0
+        if [ "$_cm" -lt "500000" ]; then
+            _frozen=1
+        elif [ "$_cm" = "$_cmin" ] && [ "$_cm" -lt "1600000" ]; then
+            _frozen=1
+        fi
+        if [ "$_frozen" = "1" ]; then
+            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm}) \u2014 re-apply"
+            for _te in $(pgrep -f "thermal-engine" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
+            thermal_full_disable; sleep 0.5
+            lmh_disable
+            cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
+            w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "650000000"
+            w $GPU/devfreq/max_freq "800000000"; w $GPU/force_clk_on "1"
+            echo "0" > "$GPU/throttling" 2>/dev/null || true
+            w /sys/class/power_supply/battery/system_temp_level "0"
+            apply_irq_affinity; log "CPU+GPU+IRQ recovered"
+        fi
+    }
+elif [ "$STATE" = "DAILY" ]; then
+    [ $(( TICK % 6 )) -eq 0 ] && {
+        _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
+        _dmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
+        _dgold=$(cat /sys/devices/system/cpu/cpu6/online 2>/dev/null || echo 0)
+        _dgold7=$(cat /sys/devices/system/cpu/cpu7/online 2>/dev/null || echo 0)
+        if [ "$_dm" -gt "1300000" ] 2>/dev/null || [ "$_dgold" = "1" ] 2>/dev/null || [ "$_dgold7" = "1" ] 2>/dev/null; then
+            warn "Daily limits verletzt (max=${_dm} gold6=${_dgold} gold7=${_dgold7}) \u2014 re-apply"
+            cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
+            cpu_hotplug_offline_gold
+            sched_daily; gpu_daily
+            log "Daily limits re-applied"
+        fi
+    }
     fi
 
     [ -n "$TARGET" ] && [ "$TARGET" != "$STATE" ] && {
