@@ -348,9 +348,8 @@ while true; do
         _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp
         log "SIGHUP: State=$STATE \u2192 manual=$MANUAL (Debounce reset)"
         LAST_ENTER_TS=0; _cfg_load_cache
-        case "$STATE" in
-            COOKING)       enter_cooking ;;
-            THERMAL_LIMIT) : ;;
+        case "$MANUAL" in
+            cooking)       enter_cooking ;;
             *)             enter_daily ;;
         esac
         write_data; TICK=$(( TICK + 1 )); sleep 3; continue
