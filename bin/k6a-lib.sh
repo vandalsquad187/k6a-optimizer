@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-lib.sh  v2.2
+# k6a-lib.sh  v2.3
 # Hardware / Scheduler / Network / App-Detection Library
 # Einbinden: . "$MODDIR/bin/k6a-lib.sh"  (POSIX-kompatibel, busybox-sicher)
 #
@@ -9,11 +9,11 @@
 #         THERMAL_WRITABLE_TRIPS=y, LRU_GEN=y, BBR=y, ZRAM=lz4,
 #         BOEFFLA_WL_BLOCKER=y, HTB=y, NETFILTER_MARK=y
 #
-# v2.2 — SCHED_FIFO + Gold-Isolation + Swapfile
-#   Neu: chrt -f -p 1 für RenderThread/UnityMain/AudioTrack
-#   Neu: cpuset foreground=4-7, system-background/background=0-3
-#   Neu: UFS-Swapfile 2G (/data/k6a_swap) statt ZRAM in cooking
-#   Neu: vm_daily restelliert ZRAM
+# v2.3 — GPU Max-Freq dynamisch + Driver-Erkennung
+#   Neu: gpu_detect_max_freq() ermittelt echten Max-Wert aus gpu_available_frequencies
+#   Neu: w() Safe-Guard nutzt $GPU_MAX_FREQ statt hardcoded 800M
+#   Neu: gpu_daily/gpu_cooking nutzen $GPU_MAX_FREQ
+#   Neu: detect_kernel_features() prüft auf installierten Adreno GPU Driver
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Pfade ─────────────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ P0=/sys/devices/system/cpu/cpufreq/policy0
 P6=/sys/devices/system/cpu/cpufreq/policy6
 
 GPU_LVL_800=0; GPU_LVL_650=1; GPU_LVL_267=5
+GPU_MAX_FREQ=800000000
 
 CS_TOP="/dev/cpuset/top-app"
 CS_FG="/dev/cpuset/foreground"
@@ -61,12 +62,11 @@ w() {
     local node="$1" val="$2"
     [ -f "$node" ] || return 1
 
-    # GPU Safe-Guard: nie > 800MHz
+    # GPU Safe-Guard: nie > GPU_MAX_FREQ (dynamisch)
     case "$node" in
         */devfreq/max_freq|*/devfreq/min_freq)
-            local max_safe=800000000
-            [ "${val:-0}" -gt "$max_safe" ] 2>/dev/null && {
-                _warn "GPU freq blocked: ${val}Hz > ${max_safe}Hz at $node"
+            [ "${val:-0}" -gt "${GPU_MAX_FREQ:-800000000}" ] 2>/dev/null && {
+                _warn "GPU freq blocked: ${val}Hz > ${GPU_MAX_FREQ}Hz at $node"
                 return 1
             } ;;
     esac
@@ -100,6 +100,8 @@ detect_kernel_features() {
     grep -q "sched_cass" /proc/sched_debug 2>/dev/null && FEATURE_SCHED_CASS=1
     [ -f /dev/cpuset/top-app/uclamp.min ] && FEATURE_UCLAMP=1
     [ -d /sys/devices/virtual/thermal/thermal_zone0 ] && FEATURE_THERMAL_WRITABLE=1
+    [ -d /data/adb/modules/adreno_gpu_driver ] && GPU_DRIVER_INSTALLED=1
+    gpu_detect_max_freq
 
     _log "Features: hotplug=$FEATURE_HOTPLUG lru_gen=$FEATURE_LRU_GEN " \
          "boeffla=$FEATURE_BOEFFLA uclamp=$FEATURE_UCLAMP " \
@@ -109,6 +111,17 @@ detect_kernel_features() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # GPU — Adreno 618 (KGSL sysfs)
 # ═══════════════════════════════════════════════════════════════════════════════
+GPU_DRIVER_INSTALLED=0
+gpu_detect_max_freq() {
+    local freqs avail
+    [ -f "$GPU/gpu_available_frequencies" ] || return
+    freqs=$(cat "$GPU/gpu_available_frequencies" 2>/dev/null)
+    for avail in $freqs; do
+        [ "${avail:-0}" -gt "$GPU_MAX_FREQ" ] 2>/dev/null && GPU_MAX_FREQ=$avail
+    done
+    _dbg "GPU max freq: ${GPU_MAX_FREQ}Hz"
+}
+
 gpu_daily() {
     w $GPU/devfreq/governor        "msm-adreno-tz"
     w $GPU/force_clk_on            "0"
@@ -117,11 +130,11 @@ gpu_daily() {
     w $GPU/thermal_pwrlevel        "0"
     w $GPU/max_pwrlevel            "$GPU_LVL_800"
     w $GPU/min_pwrlevel            "$GPU_LVL_267"
-    w $GPU/devfreq/max_freq        "800000000"
+    w $GPU/devfreq/max_freq        "$GPU_MAX_FREQ"
     w $GPU/devfreq/min_freq        "267000000"
     w $GPU/adreno_idler_active     "1"
     echo "1" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU daily: 267-800MHz idler ON"
+    dbg "GPU daily: 267-${GPU_MAX_FREQ}Hz idler ON"
 }
 
 gpu_cooking() {
@@ -132,12 +145,12 @@ gpu_cooking() {
     w $GPU/thermal_pwrlevel        "0"
     w $GPU/max_pwrlevel            "$GPU_LVL_800"
     w $GPU/min_pwrlevel            "$GPU_LVL_800"
-    w $GPU/devfreq/max_freq        "800000000"
-    w $GPU/devfreq/min_freq        "800000000"
+    w $GPU/devfreq/max_freq        "$GPU_MAX_FREQ"
+    w $GPU/devfreq/min_freq        "$GPU_MAX_FREQ"
     w $GPU/devfreq/polling_interval "2"
     w $GPU/adreno_idler_active     "0"
     echo "0" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU cooking: locked 800MHz"
+    dbg "GPU cooking: locked ${GPU_MAX_FREQ}Hz"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

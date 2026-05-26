@@ -108,6 +108,18 @@ echo "  thermal_pwrlevel: $gpu_thermal"
 echo "  force_clk_on   : $gpu_clk"
 echo "  force_bus_on   : $gpu_bus"
 echo "  throttling     : $gpu_throttle"
+
+# Adreno GPU Driver Modul erkennen
+if [ -d /data/adb/modules/adreno_gpu_driver ]; then
+    driver_ver=$(grep "^version=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2)
+    driver_desc=$(grep "^description=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2)
+    echo "  GPU Driver     : installiert — $driver_ver"
+    [ -n "$driver_desc" ] && echo "  Beschreibung   : $driver_desc"
+fi
+
+# Zusätzliche KGSL Nodes
+gpu_avail_freq=$(cat $GPU/gpu_available_frequencies 2>/dev/null || echo "N/A")
+echo "  available_freqs: $gpu_avail_freq"
 echo ""
 
 # ── IRQ AFFINITÄT ─────────────────────────────────────────────────────────────
