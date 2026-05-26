@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a Optimizer — Diagnose Script v9.0
+# k6a Optimizer — Diagnose Script v9.5
 # Nutzung: su -c "sh /data/adb/modules/Bad4zz89_k6a_tweaks/bin/k6a-diagnose.sh"
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -109,6 +109,14 @@ echo "  force_clk_on   : $gpu_clk"
 echo "  force_bus_on   : $gpu_bus"
 echo "  throttling     : $gpu_throttle"
 
+# Adreno 0819.0-spezifische Nodes prüfen (falls neuer Treiber neue bringt)
+for node in force_bus_vote force_clk_vote perf_mode gpu_clock gpu_busy gpu_load \
+            gpu_preemption_stride gpu_preemption_latency gpu_rt_busy gpu_rt_level \
+            pwrscale sched_0 sched_1 sched_2 sched_3 sched_4 sched_5 sched_6 sched_7; do
+    nfile="$GPU/$node"
+    [ -f "$nfile" ] && echo "  ${node}       : $(cat "$nfile" 2>/dev/null)"
+done
+
 # Adreno GPU Driver Modul erkennen
 if [ -d /data/adb/modules/adreno_gpu_driver ]; then
     driver_ver=$(grep "^version=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2)
@@ -120,6 +128,50 @@ fi
 # Zusätzliche KGSL Nodes
 gpu_avail_freq=$(cat $GPU/gpu_available_frequencies 2>/dev/null || echo "N/A")
 echo "  available_freqs: $gpu_avail_freq"
+
+# Adreno Driver Modul — vollständige Info
+if [ -d /data/adb/modules/adreno_gpu_driver ]; then
+    echo "  ── Adreno Driver Module ──"
+    for prop in module.prop action.sh post-fs-data.sh service.sh customize.sh system.prop; do
+        pfile="/data/adb/modules/adreno_gpu_driver/$prop"
+        [ -f "$pfile" ] && echo "  ✓ $prop ($(wc -c < "$pfile" 2>/dev/null || echo 0) bytes)"
+    done
+    desc=$(grep "^description=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2-)
+    author=$(grep "^author=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2-)
+    [ -n "$desc" ] && echo "  description      : $desc"
+    [ -n "$author" ] && echo "  author           : $author"
+fi
+
+# ── KGSL KOMPLETT-DUMP (für Adreno 0819.0 Treibertest) ─────────────────────────
+echo "[ KGSL KOMPLETT-DUMP ]"
+for entry in $(find "$GPU" -maxdepth 2 -type f 2>/dev/null | sort); do
+    fname="${entry##*/}"
+    case "$fname" in
+        gpu_busy_percentage|gpu_model|gpu_model_number|snapshots|wake_mask|gpu_busy|gpu_load)
+            echo "  ${entry#$GPU/} = $(cat "$entry" 2>/dev/null || echo 'N/A')" ;;
+        devfreq/cur_freq|devfreq/available_frequencies|devfreq/available_governors|devfreq/polling_interval|devfreq/trans_stat)
+            echo "  ${entry#$GPU/} = $(cat "$entry" 2>/dev/null || echo 'N/A')" ;;
+    esac
+done
+echo ""
+
+# ── UNBEKANNTE KGSL-NODES (Neuzugänge durch Adreno Treiber) ───────────────────
+echo "[ KGSL — unbekannte / neue Nodes ]"
+for entry in $(find "$GPU" -maxdepth 2 -type f 2>/dev/null | sort); do
+    fname="${entry##*/}"
+    parent="${entry%/*}"; parent="${parent##*/}"
+    case "$fname" in
+        min_pwrlevel|max_pwrlevel|thermal_pwrlevel|num_pwrlevels|gpu_freq_table|\
+        force_clk_on|force_bus_on|force_rail_on|bus_split|throttling|\
+        gpu_available_frequencies|gpu_busy_percentage|gpu_model|gpu_model_number|\
+        gpu_busy|gpu_load|snapshots|wake_mask|gpu_clock|gpu_preemption_stride|\
+        gpu_preemption_latency|adreno_idler_active|adreno_idler_idleworkload|\
+        devfreq/*|sched_*|gpuclk|gpubusy|gpu_llc_*|gpu_rt_busy|gpu_rt_level|\
+        pwrscale|cluster*|sp_*) continue ;;
+    esac
+    val=$(cat "$entry" 2>/dev/null | tr '\n' ' ' | head -c 120 || echo 'N/A')
+    echo "  ${entry#$GPU/} = $val"
+done
 echo ""
 
 # ── IRQ AFFINITÄT ─────────────────────────────────────────────────────────────
