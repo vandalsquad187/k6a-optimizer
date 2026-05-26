@@ -230,10 +230,11 @@ enter_daily() {
     _can_enter || return 0
     log "\u2192 DAILY"; _cfg_load_cache
     cpu_hotplug_online_all
-    cpu_set "schedutil" "576000" "1804800" "652800" "2304000"
+    cpu_set "schedutil" "300000" "1248000" "652800" "1651200"
+    cpu_hotplug_offline_gold
     gpu_daily; io_daily; sched_daily; vm_daily; lmk_default; zram_daily
-    lru_gen_enable; sf_daily; wakelock_restore
-    thermal_full_restore; restore_battery_spoof
+    lru_gen_enable; sf_daily; wakelock_block
+    thermal_daily; restore_battery_spoof
     net_restore; bt_restore
     resetprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || true
     setprop debug.sf.disable_backpressure   "0" 2>/dev/null || true
@@ -245,8 +246,8 @@ enter_daily() {
     start logd 2>/dev/null || true; unfreeze_all
     THERMAL_CAPPED=0; _RIL_PINNED=0
     printf '%s' "daily" > "$PROFILE"; STATE="DAILY"
-    log "DAILY: Silver 576-1804MHz | Gold 652-2304MHz | GPU 267-800MHz (idler) | EAS=1"
-    ( sleep 2; cpu_set "schedutil" "576000" "1804800" "652800" "2304000" ) &
+    log "DAILY: Silver 300-1248MHz | Gold offline | GPU 140-267MHz Lock | trips 55°C | WLAN ON"
+    ( sleep 2; cpu_set "schedutil" "300000" "1248000" "652800" "1651200" ) &
 }
 
 enter_cooking() {

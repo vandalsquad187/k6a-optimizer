@@ -9,11 +9,12 @@
 #         THERMAL_WRITABLE_TRIPS=y, LRU_GEN=y, BBR=y, ZRAM=lz4,
 #         BOEFFLA_WL_BLOCKER=y, HTB=y, NETFILTER_MARK=y
 #
-# v2.3 — GPU Max-Freq dynamisch + Driver-Erkennung
-#   Neu: gpu_detect_max_freq() ermittelt echten Max-Wert aus gpu_available_frequencies
-#   Neu: w() Safe-Guard nutzt $GPU_MAX_FREQ statt hardcoded 800M
-#   Neu: gpu_daily/gpu_cooking nutzen $GPU_MAX_FREQ
-#   Neu: detect_kernel_features() prüft auf installierten Adreno GPU Driver
+# v2.4 — Daily Sparmodus: Gold offline + GPU 140-267 + Trips 55°C
+#   Neu: thermal_daily() — Trips 55°C, mi_thermald killen, engine+LMH aktiv
+#   Neu: gpu_daily() — Lock 140-267 MHz (min_pwrlevel=GPU_LVL_267)
+#   Neu: sched_daily() — hispeed_load=100, upmigrate=100, uclamp_max=50
+#   Neu: cpu_hotplug_offline_gold() — Gold 4-7 offline
+#   Geändert: enter_daily() — Silver 300-1248, Gold offline, Wakelock blocken
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Pfade ─────────────────────────────────────────────────────────────────────
@@ -127,14 +128,14 @@ gpu_daily() {
     w $GPU/force_clk_on            "0"
     w $GPU/force_bus_on            "0"
     w $GPU/bus_split               "1"
-    w $GPU/thermal_pwrlevel        "0"
-    w $GPU/max_pwrlevel            "$GPU_LVL_800"
+    w $GPU/thermal_pwrlevel        "5"
+    w $GPU/max_pwrlevel            "$GPU_LVL_267"
     w $GPU/min_pwrlevel            "$GPU_LVL_267"
-    w $GPU/devfreq/max_freq        "$GPU_MAX_FREQ"
-    w $GPU/devfreq/min_freq        "267000000"
+    w $GPU/devfreq/max_freq        "267000000"
+    w $GPU/devfreq/min_freq        "140000000"
     w $GPU/adreno_idler_active     "1"
     echo "1" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU daily: 267-${GPU_MAX_FREQ}Hz idler ON"
+    dbg "GPU daily: 140-267MHz Lock niedrig"
 }
 
 gpu_cooking() {
@@ -198,6 +199,16 @@ cpu_hotplug_online_all() {
     _log "CPU Hotplug: All cores online"
 }
 
+cpu_hotplug_offline_gold() {
+    [ "$FEATURE_HOTPLUG" = "0" ] && return 0
+    local c
+    for c in 4 5 6 7; do
+        [ -f /sys/devices/system/cpu/cpu${c}/online ] || continue
+        echo 0 > /sys/devices/system/cpu/cpu${c}/online 2>/dev/null || true
+    done
+    _log "CPU Hotplug: Gold cores 4-7 offline"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # THERMAL TRIP-POINT MANAGER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -236,6 +247,17 @@ thermal_trips_restore() {
     done < "$_TRIP_CACHE_FILE"
     rm -f "$_TRIP_CACHE_FILE" 2>/dev/null
     dbg "Thermal trips restored from cache"
+}
+
+thermal_daily() {
+    thermal_trips_raise 55000
+    local pid
+    for pid in $(pgrep -x "mi_thermald" 2>/dev/null); do kill -9 "$pid" 2>/dev/null || true; done
+    for te in /vendor/bin/mi_thermald /system/bin/mi_thermald; do
+        [ -f "$te" ] || continue
+        mount --bind /bin/true "$te" 2>/dev/null && _log "Bind-mount: $te → /bin/true" || true
+    done
+    _log "Thermal daily: trips 55°C, mi_thermald killed (engine+LMH aktiv)"
 }
 
 # ── Thermal Daemon Manager ─────────────────────────────────────────────────────
@@ -357,34 +379,36 @@ apply_irq_affinity() {
 # SCHEDULER — daily + cooking
 # ═══════════════════════════════════════════════════════════════════════════════
 sched_daily() {
-    echo "0-7" > "$CS_TOP/cpus" 2>/dev/null || true
-    echo "0-7" > "$CS_FG/cpus"  2>/dev/null || true
+    echo "0-3" > "$CS_TOP/cpus" 2>/dev/null || true
+    echo "0-3" > "$CS_FG/cpus"  2>/dev/null || true
+    echo "0-3" > "$CS_SYS/cpus" 2>/dev/null || true
+    echo "0-3" > "$CS_RESTRICT/cpus" 2>/dev/null || true
     w "$CS_TOP/uclamp.min"               "0.00"
-    w "$CS_TOP/uclamp.max"               "100.00"
+    w "$CS_TOP/uclamp.max"               "50.00"
     w "$CS_TOP/uclamp.boosted"           "0"
     w "$CS_TOP/uclamp.latency_sensitive" "0"
     w "$CS_FG/uclamp.min"                "0.00"
-    w "$CS_FG/uclamp.max"                "100.00"
+    w "$CS_FG/uclamp.max"                "50.00"
     w "$CS_FG/uclamp.boosted"            "0"
     w "$CS_FG/uclamp.latency_sensitive"  "0"
-    w /proc/sys/kernel/sched_upmigrate        "95"
-    w /proc/sys/kernel/sched_downmigrate      "85"
+    w /proc/sys/kernel/sched_upmigrate        "100"
+    w /proc/sys/kernel/sched_downmigrate      "95"
     w /proc/sys/kernel/sched_child_runs_first "1"
     w /proc/sys/kernel/sched_energy_aware     "1"
-    w /proc/sys/kernel/sched_util_clamp_min   "128"
-    w /proc/sys/kernel/sched_util_clamp_max   "1024"
+    w /proc/sys/kernel/sched_util_clamp_min   "0"
+    w /proc/sys/kernel/sched_util_clamp_max   "512"
     w /proc/sys/kernel/sched_boost            "0"
-    w "$P0/schedutil/up_rate_limit_us"    "2000"
-    w "$P0/schedutil/down_rate_limit_us"  "8000"
-    w "$P6/schedutil/up_rate_limit_us"    "2000"
-    w "$P6/schedutil/down_rate_limit_us"  "8000"
-    w "$P0/schedutil/hispeed_load"    "90"
+    w "$P0/schedutil/up_rate_limit_us"    "10000"
+    w "$P0/schedutil/down_rate_limit_us"  "50000"
+    w "$P6/schedutil/up_rate_limit_us"    "10000"
+    w "$P6/schedutil/down_rate_limit_us"  "50000"
+    w "$P0/schedutil/hispeed_load"    "100"
     w "$P0/schedutil/hispeed_freq"    "0"
-    w "$P6/schedutil/hispeed_load"    "90"
+    w "$P6/schedutil/hispeed_load"    "100"
     w "$P6/schedutil/hispeed_freq"    "0"
     w "$P0/schedutil/pl"              "0"
     w "$P6/schedutil/pl"              "0"
-    _dbg "Sched daily: EAS=1 uclamp_min=128 migrate=95/85 rates=2000/8000 pl=0 hispeed=90/0"
+    _dbg "Sched daily: Cpusets=0-3 upmigrate=100 uclamp_max=50 rates=10000/50000 hispeed=100 pl=0"
 }
 
 sched_cooking() {
