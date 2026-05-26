@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-lib.sh  v2.0
+# k6a-lib.sh  v2.2
 # Hardware / Scheduler / Network / App-Detection Library
 # Einbinden: . "$MODDIR/bin/k6a-lib.sh"  (POSIX-kompatibel, busybox-sicher)
 #
@@ -9,12 +9,11 @@
 #         THERMAL_WRITABLE_TRIPS=y, LRU_GEN=y, BBR=y, ZRAM=lz4,
 #         BOEFFLA_WL_BLOCKER=y, HTB=y, NETFILTER_MARK=y
 #
-# v2.0 — 2-Mode-Architektur: daily + cooking
-#   Entfernt: battery, gaming, competitive Profile
-#   Entfernt: apply_adaptive_thermal, thermal_zone_list, freeze_for, unfreeze_for
-#   Entfernt: lmk_battery, lru_gen_battery, sched_battery, gpu_battery, io_battery, vm_battery
-#   Entfernt: sched_competitive (merged in sched_cooking), net_competitive (merged in net_cooking)
-#   Merged: lmk_gaming=lmk_balanced → lmk_default, lru_gen_gaming=balanced → lru_gen_enable
+# v2.2 — SCHED_FIFO + Gold-Isolation + Swapfile
+#   Neu: chrt -f -p 1 für RenderThread/UnityMain/AudioTrack
+#   Neu: cpuset foreground=4-7, system-background/background=0-3
+#   Neu: UFS-Swapfile 2G (/data/k6a_swap) statt ZRAM in cooking
+#   Neu: vm_daily restelliert ZRAM
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Pfade ─────────────────────────────────────────────────────────────────────
@@ -377,10 +376,10 @@ sched_daily() {
 
 sched_cooking() {
     echo "0-7" > "$CS_TOP/cpus"      2>/dev/null || true
-    echo "0-7" > "$CS_FG/cpus"       2>/dev/null || true
-    echo "0-5" > "$CS_SYS/cpus"      2>/dev/null || true
-    echo "0-5" > "$CS_BG/cpus"       2>/dev/null || true
-    echo "2-5" > "$CS_RESTRICT/cpus" 2>/dev/null || true
+    echo "4-7" > "$CS_FG/cpus"       2>/dev/null || true
+    echo "0-3" > "$CS_SYS/cpus"      2>/dev/null || true
+    echo "0-3" > "$CS_BG/cpus"       2>/dev/null || true
+    echo "2-3" > "$CS_RESTRICT/cpus" 2>/dev/null || true
     w "$CS_TOP/uclamp.min"               "60.00"
     w "$CS_TOP/uclamp.max"               "100.00"
     w "$CS_TOP/uclamp.boosted"           "1"
@@ -460,6 +459,9 @@ vm_daily() {
     w /proc/sys/vm/extra_free_kbytes      "24576"
     w /proc/sys/vm/watermark_scale_factor  "10"
     w /proc/sys/vm/min_free_kbytes         "11065"
+    swapoff /data/k6a_swap 2>/dev/null || true
+    mkswap /dev/block/zram0 2>/dev/null
+    swapon /dev/block/zram0 2>/dev/null || true
 }
 
 vm_cooking() {
@@ -473,6 +475,13 @@ vm_cooking() {
     w /proc/sys/vm/watermark_scale_factor  "30"
     w /proc/sys/vm/min_free_kbytes         "24576"
     w /proc/sys/vm/page-cluster           "0"
+    swapoff /dev/block/zram0 2>/dev/null || true
+    if [ ! -f /data/k6a_swap ]; then
+        fallocate -l 2G /data/k6a_swap 2>/dev/null || \
+        dd if=/dev/zero of=/data/k6a_swap bs=1M count=2048 2>/dev/null
+        mkswap /data/k6a_swap 2>/dev/null
+    fi
+    swapon /data/k6a_swap 2>/dev/null || true
 }
 
 lmk_default() { w /sys/module/lowmemorykiller/parameters/minfree "18432,23040,27648,32256,55296,80640"; }
@@ -483,16 +492,12 @@ zram_daily() {
 }
 
 zram_cooking() {
-    local swap_free swap_total dirty z
-    swap_free=$(grep SwapFree  /proc/meminfo | awk '{print $2}')
+    local swap_total swap_used pct
     swap_total=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
-    dirty=$(( swap_total - swap_free ))
-    for z in /sys/block/zram*/comp_algorithm; do
-        [ -f "$z" ] || continue
-        [ "${dirty:-0}" -lt 10240 ] && echo "lz4" > "$z" 2>/dev/null || true
-    done
+    swap_used=$(( swap_total - $(grep SwapFree /proc/meminfo | awk '{print $2}') ))
+    pct=0; [ "${swap_total:-0}" -gt 0 ] && pct=$(( swap_used * 100 / swap_total ))
     w /proc/sys/vm/page-cluster "0"
-    _dbg "ZRAM: lz4 forced, page-cluster=0"
+    _dbg "Swap: UFS-${swap_used}K/${swap_total}K (${pct}%) page-cluster=0"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -660,9 +665,15 @@ tune_cooking() {
         [ -f "/proc/$main_pid/task/$tid/comm" ] || continue
         tname=$(cat "/proc/$main_pid/task/$tid/comm" 2>/dev/null)
         case "$tname" in
-            *RenderThread*|*UnityMain*|*GLThread*)  taskset -p 0xc0 "$tid" >/dev/null 2>&1 ;;
-            *Worker*Thread*|*JobWorker*|*UnityGfx*) taskset -p 0x3f "$tid" >/dev/null 2>&1 ;;
-            *AudioMixer*|*AudioTrack*)               taskset -p 0x3f "$tid" >/dev/null 2>&1 ;;
+            *RenderThread*|*UnityMain*|*GLThread*)
+                taskset -p 0xc0 "$tid" >/dev/null 2>&1
+                chrt -f -p 1 "$tid" 2>/dev/null || true ;;
+            *Worker*Thread*|*JobWorker*|*UnityGfx*)
+                taskset -p 0x3f "$tid" >/dev/null 2>&1
+                chrt -b -p 0 "$tid" 2>/dev/null || true ;;
+            *AudioMixer*|*AudioTrack*)
+                taskset -p 0x3f "$tid" >/dev/null 2>&1
+                chrt -f -p 1 "$tid" 2>/dev/null || true ;;
         esac
     done
 

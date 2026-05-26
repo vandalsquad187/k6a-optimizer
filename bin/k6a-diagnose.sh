@@ -274,6 +274,16 @@ if [ -f /sys/block/zram0/comp_algorithm ]; then
 else
     echo "  ZRAM: nicht verfügbar"
 fi
+swap_total=$(grep SwapTotal /proc/meminfo 2>/dev/null | awk '{print $2}')
+swap_free=$(grep SwapFree /proc/meminfo 2>/dev/null | awk '{print $2}')
+if [ -n "$swap_total" ] && [ "$swap_total" -gt 0 ] 2>/dev/null; then
+    swap_used=$(( swap_total - swap_free ))
+    swap_pct=$(( swap_used * 100 / swap_total ))
+    echo "  Swap: ${swap_used}K / ${swap_total}K (${swap_pct}%)"
+    if [ -f /data/k6a_swap ]; then
+        echo "  Swapfile: /data/k6a_swap ($(du -h /data/k6a_swap 2>/dev/null | cut -f1))"
+    fi
+fi
 echo ""
 
 # ── CONFIG SETTINGS ──────────────────────────────────────────────────────────
