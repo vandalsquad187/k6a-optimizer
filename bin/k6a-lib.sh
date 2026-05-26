@@ -149,9 +149,10 @@ gpu_cooking() {
     w $GPU/devfreq/max_freq        "$GPU_MAX_FREQ"
     w $GPU/devfreq/min_freq        "$GPU_MAX_FREQ"
     w $GPU/devfreq/polling_interval "2"
+    w $GPU/pwrscale                "0"
     w $GPU/adreno_idler_active     "0"
     echo "0" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU cooking: locked ${GPU_MAX_FREQ}Hz"
+    dbg "GPU cooking: locked ${GPU_MAX_FREQ}Hz pwrscale=0"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

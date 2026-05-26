@@ -413,11 +413,13 @@ while true; do
             _gm=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
             _gc=$(cat $GPU/force_clk_on    2>/dev/null || echo 1)
             _gp=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 0)
-            { [ "$_gm" -lt "640000000" ] || [ "$_gc" != "1" ] || [ "$_gp" -gt "0" ]; } && {
+            _gps=$(cat $GPU/pwrscale        2>/dev/null || echo 1)
+            { [ "$_gm" -lt "640000000" ] || [ "$_gc" != "1" ] || [ "$_gp" -gt "0" ] || [ "$_gps" = "1" ]; } && {
                 w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "650000000"
                 w $GPU/devfreq/max_freq "800000000"; w $GPU/min_pwrlevel "$GPU_LVL_650"
                 w $GPU/max_pwrlevel "$GPU_LVL_800"; w $GPU/force_clk_on "1"
-                w $GPU/force_bus_on "1"; echo "0" > "$GPU/throttling" 2>/dev/null || true
+                w $GPU/force_bus_on "1"; w $GPU/pwrscale "0"
+                echo "0" > "$GPU/throttling" 2>/dev/null || true
                 dbg "GPU corrected"
             }
         }
