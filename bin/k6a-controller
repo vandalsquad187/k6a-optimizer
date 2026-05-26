@@ -425,14 +425,19 @@ while true; do
     [ $(( TICK % 3 )) -eq 0 ] && {
         _cm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 9999999)
         _cmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
+        _cgm=$(cat "$P6/scaling_max_freq" 2>/dev/null || echo 9999999)
+        _cgmin=$(cat "$P6/scaling_min_freq" 2>/dev/null || echo 0)
         _frozen=0
         if [ "$_cm" -lt "500000" ]; then
             _frozen=1
         elif [ "$_cm" = "$_cmin" ] && [ "$_cm" -lt "1600000" ]; then
             _frozen=1
         fi
+        if [ "$_cgm" = "$_cgmin" ] && [ "$_cgm" -gt "1900000" ] 2>/dev/null; then
+            _frozen=1
+        fi
         if [ "$_frozen" = "1" ]; then
-            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm}) \u2014 re-apply"
+            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm} Gold min=${_cgmin} max=${_cgm}) \u2014 re-apply"
             for _te in $(pgrep -f "thermal-engine" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
             thermal_full_disable; sleep 0.5
             lmh_disable
@@ -447,15 +452,11 @@ while true; do
 elif [ "$STATE" = "DAILY" ]; then
     [ $(( TICK % 6 )) -eq 0 ] && {
         _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
-        _dmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
-        _dgold=$(cat /sys/devices/system/cpu/cpu6/online 2>/dev/null || echo 0)
-        _dgold7=$(cat /sys/devices/system/cpu/cpu7/online 2>/dev/null || echo 0)
-        if [ "$_dm" -gt "1300000" ] 2>/dev/null || [ "$_dgold" = "1" ] 2>/dev/null || [ "$_dgold7" = "1" ] 2>/dev/null; then
-            warn "Daily limits verletzt (max=${_dm} gold6=${_dgold} gold7=${_dgold7}) \u2014 re-apply"
+        if [ "$_dm" -gt "1300000" ] 2>/dev/null; then
+            dbg "Daily limits verletzt (max=${_dm}) \u2014 re-apply"
             cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
             cpu_hotplug_offline_gold
             sched_daily; gpu_daily
-            log "Daily limits re-applied"
         fi
     }
     fi
