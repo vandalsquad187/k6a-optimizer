@@ -1,7 +1,7 @@
 # [BadazZ89] k6a Optimizer v9.9
 
 KernelSU Next module for **Redmi Note 12 Pro 4G (sweet2 / sweet_k6a)**
-SoC: Snapdragon 730 (SM7150) · Kernel: VantomKernel 4.14.356-openela-rc1 (EAS/uclamp/SCHED_CASS)
+SoC: Snapdragon 730 (SM7150) · Kernel: VantomKernel 4.14.356-openela-rc1 (https://github.com/Lafactorial/kernel_xiaomi_sm6150/tree/23.2) (EAS/uclamp/SCHED_CASS)
 
 ---
 
