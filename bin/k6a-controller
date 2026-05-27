@@ -59,12 +59,16 @@ _cfg_load_cache() {
     CFG_CPU_HOTPLUG=$(cfg cpu_hotplug_enable);  CFG_CPU_HOTPLUG=${CFG_CPU_HOTPLUG:-0}
     DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
     CFG_DEBUG=$DEBUG
+    CFG_DEBOUNCE_WIN=$(cfg debounce_window); CFG_DEBOUNCE_WIN=${CFG_DEBOUNCE_WIN:-5}
+    [ "$CFG_DEBOUNCE_WIN" -lt 0 ] 2>/dev/null && CFG_DEBOUNCE_WIN=0
+    [ "$CFG_DEBOUNCE_WIN" -gt 60 ] 2>/dev/null && CFG_DEBOUNCE_WIN=60
+    CFG_NET_QOS=$(cfg net_qos_enable); CFG_NET_QOS=${CFG_NET_QOS:-0}
 }
 
 _can_enter() {
     local now diff
     now=$(date +%s); diff=$(( now - LAST_ENTER_TS ))
-    [ "$diff" -lt 15 ] && { warn "Debounce blocked: ${diff}s/15s"; return 1; }
+    [ "$diff" -lt "$CFG_DEBOUNCE_WIN" ] && { warn "Debounce blocked: ${diff}s/${CFG_DEBOUNCE_WIN}s"; return 1; }
     LAST_ENTER_TS=$now; return 0
 }
 
@@ -174,6 +178,9 @@ write_data() {
     freeze_str=""
     [ -f "$FREEZE" ] && freeze_str=$(grep -v "^#" "$FREEZE" 2>/dev/null | grep -v "^$" | tr '\n' '|' | sed 's/|$//' || echo "")
 
+    local gpu_driver_desc=""
+    [ -f /data/adb/modules/adreno_gpu_driver/module.prop ] && gpu_driver_desc=$(grep "^description=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2- | head -1)
+    [ -z "$gpu_driver_desc" ] && gpu_driver_desc="—"
     local c_cpu_hotplug=${CFG_CPU_HOTPLUG:-0}
     local _ping_val _ping_stale
 
@@ -190,7 +197,10 @@ cpu_sil_mhz=${cpu_s}
 cpu_gold_mhz=${cpu_g}
 gpu_mhz=${gpu_mhz}
 gpu_busy=${gpu_busy}
+gpu_driver=${gpu_driver_desc}
 net_type=${NET_TYPE}
+net_qos=${CFG_NET_QOS}
+net_iface=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
 bat=${bat_str}
 bat_temp=${btp_c}
 kernel=${kv}

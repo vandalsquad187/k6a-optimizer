@@ -8,7 +8,7 @@
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 :root {
   --bg:     #30161d;
-  --card:   #1e0e13;
+  --card:   rgba(30,14,19,0.85);
   --border: #2e1215;
   --accent: #e53935;
   --accent2:#ff6b35;
@@ -44,9 +44,7 @@ body {
 .badge { font-family:monospace; font-size:10px; padding:5px 12px; border-radius:20px; border:1px solid; letter-spacing:1px; font-weight:700; transition:all .3s ease; }
 .badge.daily   { color:#ff9800; border-color:rgba(255,152,0,.5); background:rgba(255,152,0,.12); box-shadow:0 0 10px rgba(255,152,0,.15); }
 .badge.cooking { color:#ff1744; border-color:rgba(255,23,68,.6); background:rgba(255,23,68,.15); box-shadow:0 0 14px rgba(255,23,68,.35); }
-#inf-pid { font-family:monospace; font-size:9px; letter-spacing:1px; transition:color .3s ease; }
-#ws-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--muted); transition:all .3s ease; }
-#profile-bar { width:80px; height:2px; border-radius:2px; transition:background .4s ease,box-shadow .4s ease; }
+.profile-bar { width:80px; height:2px; border-radius:2px; transition:background .4s ease,box-shadow .4s ease; }
 .body { padding:14px 16px; max-width:420px; margin:0 auto; display:flex; flex-direction:column; gap:10px; }
 .card {
   background: var(--card);
@@ -54,6 +52,12 @@ body {
   border-radius: 14px;
   padding: 14px 16px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.sys-card-hot {
+  box-shadow: 0 0 28px rgba(255,23,68,.4), 0 2px 16px rgba(0,0,0,.4) !important;
+  border-color: rgba(255,23,68,.5) !important;
 }
 .card-title {
   font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
@@ -172,6 +176,17 @@ body {
   pointer-events:none; z-index:100; white-space:nowrap;
 }
 .toast.on { opacity:1; transform:translateX(-50%) translateY(0); }
+#fs-btn {
+  background:none; border:1px solid var(--border); border-radius:10px;
+  color:var(--muted); font-size:18px; cursor:pointer; padding:6px 10px;
+  line-height:1; transition:all .2s;
+}
+#fs-btn:hover { border-color:var(--accent); color:var(--text); }
+#fs-btn.fs-on {
+  color:var(--accent); border-color:rgba(229,57,53,.6);
+  box-shadow:0 0 16px rgba(229,57,53,.25);
+  text-shadow:0 0 6px rgba(229,57,53,.4);
+}
 @keyframes pulse-glow {
   0%, 100% { box-shadow:0 0 14px rgba(255,23,68,.25); }
   50% { box-shadow:0 0 24px rgba(255,23,68,.5); }
@@ -189,9 +204,7 @@ body {
   </div>
   <div class="header-right">
     <div class="badge daily" id="badge">⚙️ DAILY</div>
-    <span id="inf-pid">—</span>
-    <span id="ws-dot"></span>
-    <div id="profile-bar" style="background:rgba(255,152,0,.5);box-shadow:0 0 6px rgba(255,152,0,.4);"></div>
+    <button id="fs-btn" onclick="toggleFS()" title="Fullscreen">⛶</button>
   </div>
 </div>
 
@@ -261,7 +274,7 @@ body {
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
 
-  <div class="card" style="margin:0;">
+  <div class="card" style="margin:0;" id="sys-card">
     <div class="card-title">System</div>
     <div class="sys-grid">
       <div class="sys-item">
@@ -280,6 +293,18 @@ body {
         <span class="sys-lbl">Network</span>
         <span class="sys-val grn" id="sys-net">—</span>
       </div>
+    </div>
+    <div class="sys-row" style="margin-top:4px;">
+      <span class="sys-lbl">GPU Driver</span>
+      <span class="sys-val" id="sys-gpu-driver" style="font-size:9px;">—</span>
+    </div>
+    <div class="sys-row" style="margin-top:2px;">
+      <span class="sys-lbl">PID</span>
+      <span class="sys-val" id="sys-pid" style="font-size:10px;">—</span>
+    </div>
+    <div class="sys-row" style="margin-top:2px;">
+      <span class="sys-lbl">QoS</span>
+      <span class="sys-val" id="sys-qos" style="font-size:10px;">—</span>
     </div>
     <div class="sec-divider" style="margin:6px 0;"></div>
     <div class="sys-row">
@@ -373,6 +398,13 @@ var RTRIG  = MOD + '/config/clean_ram_now';
 function run(cmd) {
     try { ksu.exec(cmd); } catch(e) {}
 }
+function toggleFS() {
+    var on = localStorage.getItem('fullscreen') === '1';
+    try { ksu.fullScreen(on ? false : true); } catch(e) { toast('Fullscreen not supported'); return; }
+    localStorage.setItem('fullscreen', on ? '0' : '1');
+    document.getElementById('fs-btn').classList.toggle('fs-on', !on);
+    toast(on ? 'Fullscreen off' : 'Fullscreen on');
+}
 function esc(s) {
     return String(s)
         .replace(/&/g, '&amp;')
@@ -449,13 +481,6 @@ function setProfileUI(p) {
     b.textContent = p === 'cooking' ? '🔥 COOKING' : '⚙️ DAILY';
     var banner = document.getElementById('cook-banner');
     if (banner) banner.style.display = p === 'cooking' ? 'block' : 'none';
-    var barEl = document.getElementById('profile-bar');
-    if (barEl) {
-        var c = p === 'cooking' ? '#ff1744' : '#ff9800';
-        var g = p === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)';
-        barEl.style.background = c;
-        barEl.style.boxShadow = '0 0 8px ' + g;
-    }
 }
 
 function applyProfile(p) {
@@ -546,6 +571,8 @@ function applyData(d) {
             var pct = Math.min(100, Math.round((ct / 100) * 100));
             if (barEl) barEl.style.width = pct + '%';
             if (pctEl) pctEl.textContent = pct + '%';
+            var sysCard = document.getElementById('sys-card');
+            if (sysCard) sysCard.classList.toggle('sys-card-hot', ct >= 80);
             if (ct > 0) {
                 _prevTemps.push(ct);
                 if (_prevTemps.length > 40) _prevTemps.shift();
@@ -593,6 +620,15 @@ function applyData(d) {
                 if (gpmhz > 0) { gpuEl.textContent = gpmhz + ' MHz (' + gpbusy + '%)'; gpuEl.style.color = gpmhz >= 700 ? 'var(--yellow)' : 'var(--red)'; }
                 else if (gpbusy > 0) { gpuEl.textContent = 'idle (' + gpbusy + '%)'; gpuEl.style.color = 'var(--muted)'; }
                 else { gpuEl.textContent = 'idle'; gpuEl.style.color = 'var(--muted)'; }
+            }
+        }
+        if (d.gpu_driver !== undefined) {
+            var gpuDriverEl = document.getElementById('sys-gpu-driver');
+            if (gpuDriverEl) {
+                var desc = (d.gpu_driver || '—').trim();
+                var short = desc.length > 50 ? desc.slice(0, 50) + '…' : desc;
+                gpuDriverEl.textContent = short;
+                gpuDriverEl.title = desc;
             }
         }
         if (d.net_type !== undefined) {
@@ -643,22 +679,25 @@ function applyData(d) {
         if (d.last_clean && d.last_clean.trim())
             document.getElementById('cache-last').textContent = '✓ last: ' + d.last_clean.trim();
 
-        var pe = document.getElementById('inf-pid');
+        var pe = document.getElementById('sys-pid');
         var activeProf = (d.manual_profile || d.profile || 'daily').trim();
-        var profColor = activeProf === 'cooking' ? '#ff1744' : '#ff9800';
         if (d.pid && d.pid.trim() && d.pid.trim() !== "0") {
             _pidMiss = 0;
-            pe.textContent = "PID " + d.pid.trim();
-            pe.style.color = profColor;
+            pe.textContent = d.pid.trim();
+            pe.style.color = activeProf === 'cooking' ? 'var(--red)' : 'var(--yellow)';
         } else {
             _pidMiss++;
             if (_pidMiss >= 3) { pe.textContent = "stopped"; pe.style.color = "var(--red)"; }
         }
 
-        var bar = document.getElementById('profile-bar');
-        if (bar) {
-            bar.style.background = profColor;
-            bar.style.boxShadow = '0 0 8px ' + (activeProf === 'cooking' ? 'rgba(255,23,68,.6)' : 'rgba(255,152,0,.4)');
+        if (d.net_qos !== undefined) {
+            var qosEl = document.getElementById('sys-qos');
+            if (qosEl) {
+                var nq = d.net_qos.trim();
+                var ni = d.net_iface ? d.net_iface.trim() : '';
+                if (nq === '1') { qosEl.textContent = 'HTB' + (ni ? ' (' + ni + ')' : ''); qosEl.style.color = 'var(--green)'; }
+                else { qosEl.textContent = 'off'; qosEl.style.color = 'var(--muted)'; }
+            }
         }
 
         (function() {
@@ -1127,6 +1166,11 @@ function updateWsIndicator(connected) {
 }
 
 window.onload = function() {
+    if (localStorage.getItem('fullscreen') === '1') {
+        try { ksu.fullScreen(true); } catch(e) {}
+        var fsBtn = document.getElementById('fs-btn');
+        if (fsBtn) fsBtn.classList.add('fs-on');
+    }
     loadFreezeConf();
     loadData(function(d) { applyData(d); });
     connectWebSocket();
