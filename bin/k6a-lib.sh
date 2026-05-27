@@ -746,6 +746,9 @@ clean_cache() {
 
 clean_ram() {
     _log "RAM: cleaning"
-    echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    sync
+    echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    echo 1 > /proc/sys/vm/compact_memory 2>/dev/null || true
+    echo 0 > /proc/sys/vm/drop_caches 2>/dev/null || true
     _log "RAM: done"
 }
