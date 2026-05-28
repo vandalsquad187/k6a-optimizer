@@ -567,25 +567,25 @@ net_cooking() {
     w /proc/sys/net/netfilter/nf_conntrack_udp_timeout "30"
     w /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream "60"
     if [ "$NET_TYPE" = "wifi" ]; then
-        w /proc/sys/net/core/rmem_max     "16777216"
-        w /proc/sys/net/core/wmem_max     "16777216"
-        w /proc/sys/net/ipv4/tcp_rmem     "4096 87380 16777216"
-        w /proc/sys/net/ipv4/tcp_wmem     "4096 65536 16777216"
-        w /proc/sys/net/ipv4/udp_rmem_min "65536"
-        w /proc/sys/net/ipv4/udp_wmem_min "65536"
-        _log "NET: WiFi-Profil (aggressive Buffer)"
-    else
-        w /proc/sys/net/core/rmem_max     "4194304"
-        w /proc/sys/net/core/wmem_max     "4194304"
-        w /proc/sys/net/ipv4/tcp_rmem     "4096 524288 4194304"
-        w /proc/sys/net/ipv4/tcp_wmem     "4096 65536 4194304"
+        w /proc/sys/net/core/rmem_max     "2097152"
+        w /proc/sys/net/core/wmem_max     "2097152"
+        w /proc/sys/net/ipv4/tcp_rmem     "4096 131072 2097152"
+        w /proc/sys/net/ipv4/tcp_wmem     "4096 16384 2097152"
         w /proc/sys/net/ipv4/udp_rmem_min "32768"
         w /proc/sys/net/ipv4/udp_wmem_min "32768"
+        _log "NET: WiFi cooking (2MB buffers, fq_codel)"
+    else
+        w /proc/sys/net/core/rmem_max     "1048576"
+        w /proc/sys/net/core/wmem_max     "1048576"
+        w /proc/sys/net/ipv4/tcp_rmem     "4096 131072 1048576"
+        w /proc/sys/net/ipv4/tcp_wmem     "4096 16384 1048576"
+        w /proc/sys/net/ipv4/udp_rmem_min "16384"
+        w /proc/sys/net/ipv4/udp_wmem_min "16384"
         local iface
         for iface in $(ip link show up 2>/dev/null | grep -o "rmnet_data[0-9]*"); do
-            tc qdisc replace dev "$iface" root pfifo_fast 2>/dev/null || true
+            tc qdisc replace dev "$iface" root fq_codel 2>/dev/null || true
         done
-        _log "NET: LTE-Profil (konservative Buffer, UDP-Prio, pfifo_fast)"
+        _log "NET: LTE cooking (1MB buffers, fq_codel)"
     fi
     setprop net.dns1 "1.1.1.1" 2>/dev/null || true
     setprop net.dns2 "8.8.8.8" 2>/dev/null || true
@@ -593,11 +593,26 @@ net_cooking() {
 }
 
 net_restore() {
-    w /proc/sys/net/ipv4/tcp_low_latency "0"
-    w /proc/sys/net/ipv4/tcp_retries2    "15"
+    w /proc/sys/net/ipv4/tcp_congestion_control "cubic"
+    w /proc/sys/net/ipv4/tcp_low_latency       "0"
+    w /proc/sys/net/ipv4/tcp_retries2          "15"
+    w /proc/sys/net/ipv4/tcp_sack              "1"
+    w /proc/sys/net/ipv4/tcp_dsack             "1"
+    w /proc/sys/net/ipv4/neigh/default/gc_stale_time "60"
+    w /proc/sys/net/netfilter/nf_conntrack_udp_timeout "30"
+    w /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream "120"
+    w /proc/sys/net/core/rmem_max     "212992"
+    w /proc/sys/net/core/wmem_max     "212992"
+    w /proc/sys/net/ipv4/tcp_rmem     "4096 87380 6291456"
+    w /proc/sys/net/ipv4/tcp_wmem     "4096 16384 4194304"
+    w /proc/sys/net/ipv4/udp_rmem_min "4096"
+    w /proc/sys/net/ipv4/udp_wmem_min "4096"
     local iface
     for iface in $(ip link show up 2>/dev/null | grep -o "rmnet_data[0-9]*"); do
         tc qdisc del dev "$iface" root 2>/dev/null || true
+    done
+    for iface in $(ip link show up 2>/dev/null | grep -o "wlan[0-9]*"); do
+        iw dev "$iface" set power_save on 2>/dev/null || true
     done
     net_qos_restore 2>/dev/null
     setprop net.dns1 "" 2>/dev/null || true
