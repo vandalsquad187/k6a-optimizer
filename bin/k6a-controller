@@ -21,7 +21,7 @@ PROFILE="$MODDIR/config/active_profile"
 DATA="$MODDIR/webroot/data.txt"
 CACHE_TRIGGER="$MODDIR/config/clean_cache_now"
 CACHE_LAST="$MODDIR/config/cache_last_cleaned"
-RAM_TRIGGER="$MODDIR/config/clean_ram_now"
+RAM_TRIGGER="$MODDIR/config/clean_ram_now"; RAM_LAST="$MODDIR/config/ram_last_cleaned"; RAM_COOLDOWN=900
 PAUSE_FILE="$MODDIR/run/pause"
 APP_EVENT="$MODDIR/run/app_event"
 THERMAL_EVENT="$MODDIR/run/thermal_event"
@@ -40,6 +40,7 @@ LAST_APP=""; LAST_CFG_MTIME=0
 LAST_FREEZE_TRIGGER=""; TICK=0; THERMAL_CAPPED=0
 PREV_TEMP=-1; TZ_FALLBACK=""; _RIL_PINNED=0; NET_TYPE="lte"; _TEMP_HIST=""
 _THERMAL_DAEMONS_STOPPED=0; LAST_ENTER_TS=0; _PAUSED=0; MANUAL="daily"
+_LAST_THERMAL_TS=0; _THERMAL_COOLDOWN=30
 THERMAL_PREDICT_TEMP=88; THERMAL_PREDICT_RATE=3
 GOLD_MAX_NORMAL="2304000"; GOLD_MAX_CAP="2169600"; _THERMAL_PREDICT_RECOVER=80
 
@@ -54,6 +55,11 @@ _cfg_load_cache() {
     [ "$CFG_DEBOUNCE_WIN" -lt 0 ] 2>/dev/null && CFG_DEBOUNCE_WIN=0
     [ "$CFG_DEBOUNCE_WIN" -gt 60 ] 2>/dev/null && CFG_DEBOUNCE_WIN=60
     CFG_NET_QOS=$(cfg net_qos_enable); CFG_NET_QOS=${CFG_NET_QOS:-0}
+    CFG_THRESH_COOKING=$(cfg thermal_cooking_thresh); CFG_THRESH_COOKING=${CFG_THRESH_COOKING:-85}
+    [ "$CFG_THRESH_COOKING" -lt 70 ] 2>/dev/null && CFG_THRESH_COOKING=70
+    [ "$CFG_THRESH_COOKING" -gt 95 ] 2>/dev/null && CFG_THRESH_COOKING=95
+    CFG_THRESH_THERMAL_RECOVER=$(cfg thermal_recover_thresh); CFG_THRESH_THERMAL_RECOVER=${CFG_THRESH_THERMAL_RECOVER:-77}
+    CFG_THRESH_COOLDOWN=$(cfg thermal_cooldown_thresh); CFG_THRESH_COOLDOWN=${CFG_THRESH_COOLDOWN:-72}
 }
 
 _can_enter() {
@@ -70,6 +76,7 @@ _enter_manual() {
         COOKING)       _enter_no_debounce enter_cooking       ;;
         DAILY)         _enter_no_debounce enter_daily         ;;
         THERMAL_LIMIT) _enter_no_debounce enter_thermal_limit ;;
+        THERMAL_RECOVERY) _enter_no_debounce enter_thermal_recovery ;;
     esac
 }
 
@@ -307,7 +314,20 @@ enter_thermal_limit() {
     sched_daily; thermal_full_restore; wakelock_restore
     PRE_THERMAL_STATE="$STATE"
     printf '%s' "gaming" > "$PROFILE"; STATE="THERMAL_LIMIT"
-    log "THERMAL_LIMIT: cooling from $PRE_THERMAL_STATE, recover <77°C"
+    log "THERMAL_LIMIT: cooling from $PRE_THERMAL_STATE, recover <${CFG_THRESH_THERMAL_RECOVER}°C"
+}
+
+enter_thermal_recovery() {
+    warn "→ THERMAL_RECOVERY (cooldown)"
+    cpu_hotplug_online_all
+    cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
+    cpu_hotplug_offline_gold
+    gpu_daily; sched_daily; io_daily; sf_daily
+    _cfg_load_cache
+    PRE_THERMAL_STATE="$STATE"
+    _LAST_THERMAL_TS=$(date +%s)
+    printf '%s' "recovery" > "$PROFILE"; STATE="THERMAL_RECOVERY"
+    log "THERMAL_RECOVERY: Gold offline, GPU 267MHz, cooldown ${_THERMAL_COOLDOWN}s <${CFG_THRESH_COOLDOWN}°C"
 }
 
 # ══ STARTUP ═══════════════════════════════════════════════════════════════════
@@ -346,7 +366,7 @@ _startup() {
         "$MODDIR/bin/k6a-daemon" "$MODDIR" >> "$MODDIR/config/daemon.log" 2>&1 &
         log "k6a-daemon gestartet (PID $!)"
     }
-    clean_ram
+    clean_cache
     [ -f "$CACHE_TRIGGER" ] && { rm -f "$CACHE_TRIGGER"; clean_cache; }
 }
 
@@ -377,16 +397,22 @@ while true; do
         rm -f "$THERMAL_EVENT" 2>/dev/null
         [ "$STATE" = "COOKING" ] && {
             _tt=$(thermal_cpu_temp)
-            [ "${_tt:-0}" -ge 82 ] && {
-                log "Transition: $STATE → THERMAL_LIMIT"
-                enter_thermal_limit "$_tt"
+            [ "${_tt:-0}" -ge "$CFG_THRESH_COOKING" ] && {
+                log "Transition: $STATE → THERMAL_LIMIT (${_tt}°C)"
+                _enter_no_debounce enter_thermal_limit "$_tt"
                 write_data
             }
         }
     fi
 
     [ -f "$CACHE_TRIGGER" ] && { rm -f "$CACHE_TRIGGER"; clean_cache; }
-    [ -f "$RAM_TRIGGER"   ] && { rm -f "$RAM_TRIGGER";   clean_ram;   }
+    [ -f "$RAM_TRIGGER"   ] && {
+        _rnow=$(date +%s); _rlast=$(cat "$RAM_LAST" 2>/dev/null || echo 0)
+        [ $(( _rnow - _rlast )) -ge "$RAM_COOLDOWN" ] && {
+            clean_ram; echo "$_rnow" > "$RAM_LAST"
+        } || dbg "RAM clean skipped (cooldown ${RAM_COOLDOWN}s)"
+        rm -f "$RAM_TRIGGER"
+    }
 
     _mt=$(stat -c %Y "$CONFIG" 2>/dev/null || echo 0)
     if [ "$_mt" != "$LAST_CFG_MTIME" ] && [ "$_mt" != "0" ]; then
@@ -410,16 +436,25 @@ while true; do
 
     if [ "$STATE" = "THERMAL_LIMIT" ]; then
         temp=$(thermal_cpu_temp)
-        [ "${temp:-99}" -lt 77 ] && {
+        [ "${temp:-99}" -lt "$CFG_THRESH_THERMAL_RECOVER" ] && {
+            TARGET="THERMAL_RECOVERY"
+            log "Thermal → THERMAL_RECOVERY (${temp}°C)"; }
+    elif [ "$STATE" = "THERMAL_RECOVERY" ]; then
+        temp=$(thermal_cpu_temp)
+        _now=$(date +%s); _cd=$(( _now - _LAST_THERMAL_TS ))
+        [ "${temp:-99}" -lt "$CFG_THRESH_COOLDOWN" ] && [ "$_cd" -ge "$_THERMAL_COOLDOWN" ] && {
             TARGET="${PRE_THERMAL_STATE:-COOKING}"
-            log "Thermal recovery → $TARGET (${temp}°C)"; }
+            log "Thermal cooldown → $TARGET (${temp}°C, ${_cd}s)" }
+        [ "${temp:-0}" -ge "$CFG_THRESH_COOKING" ] && {
+            TARGET="THERMAL_LIMIT"
+            warn "THERMAL_RECOVERY → THERMAL_LIMIT (${temp}°C, still heating)" }
     else
         case "$MANUAL" in cooking) TARGET="COOKING" ;; *) TARGET="DAILY" ;; esac
     fi
 
     if [ "$STATE" = "COOKING" ]; then
         temp=$(thermal_cpu_temp)
-        [ "${temp:-0}" -ge 90 ] && TARGET="THERMAL_LIMIT"
+        [ "${temp:-0}" -ge "$CFG_THRESH_COOKING" ] && TARGET="THERMAL_LIMIT"
         thermal_predict_check
         [ $(( TICK % 10 )) -eq 0 ] && tune_cooking "$CODM_PKG"
         [ $(( TICK % 20 )) -eq 0 ] && apply_irq_affinity
@@ -427,18 +462,49 @@ while true; do
         [ "${_stl:-0}" -gt "0" ] && w /sys/class/power_supply/battery/system_temp_level "0"
 
         [ $(( TICK % 2 )) -eq 0 ] && {
+            _temp=$(thermal_cpu_temp)
             _gm=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
-            _gc=$(cat $GPU/force_clk_on    2>/dev/null || echo 1)
-            _gp=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 0)
-            _gps=$(cat $GPU/pwrscale        2>/dev/null || echo 2)
-            { [ "$_gm" -lt "500000000" ] || [ "$_gc" != "1" ] || [ "$_gp" -gt "0" ] || [ "$_gps" = "1" ]; } && {
-                w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "565000000"
-                w $GPU/devfreq/max_freq "800000000"; w $GPU/min_pwrlevel "$GPU_LVL_650"
-                w $GPU/max_pwrlevel "$GPU_LVL_800"; w $GPU/force_clk_on "1"
-                w $GPU/force_bus_on "1"; w $GPU/pwrscale "0"
+            _gp=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 4)
+            if [ "${_temp:-0}" -ge 80 ] 2>/dev/null; then
+                w $GPU/thermal_pwrlevel "0"
+                w $GPU/devfreq/min_freq "267000000"
+                w $GPU/devfreq/max_freq "355000000"
+                w $GPU/min_pwrlevel "$GPU_LVL_355"
+                w $GPU/max_pwrlevel "$GPU_LVL_800"
+                w $GPU/force_clk_on "0"
+                echo "1" > "$GPU/throttling" 2>/dev/null || true
+                dbg "GPU thermal 80°C+: 355MHz max"
+            elif [ "${_temp:-0}" -ge 76 ] 2>/dev/null; then
+                w $GPU/thermal_pwrlevel "0"
+                w $GPU/devfreq/min_freq "342000000"
+                w $GPU/devfreq/max_freq "430000000"
+                w $GPU/min_pwrlevel "$GPU_LVL_430"
+                w $GPU/max_pwrlevel "$GPU_LVL_800"
+                w $GPU/force_clk_on "1"
+                w $GPU/force_bus_on "1"
                 echo "0" > "$GPU/throttling" 2>/dev/null || true
-                dbg "GPU corrected: min=565MHz max=800MHz pwrlevel=1"
-            }
+                dbg "GPU thermal 76°C+: 430MHz max"
+            elif [ "${_temp:-0}" -ge 72 ] 2>/dev/null; then
+                w $GPU/thermal_pwrlevel "0"
+                w $GPU/devfreq/min_freq "430000000"
+                w $GPU/devfreq/max_freq "565000000"
+                w $GPU/min_pwrlevel "$GPU_LVL_565"
+                w $GPU/max_pwrlevel "$GPU_LVL_800"
+                w $GPU/force_clk_on "1"
+                w $GPU/force_bus_on "1"
+                echo "0" > "$GPU/throttling" 2>/dev/null || true
+                dbg "GPU thermal 72°C+: 565MHz max"
+            elif { [ "$_gm" -lt "500000000" ] || [ "$_gp" -gt "0" ]; }; then
+                w $GPU/thermal_pwrlevel "0"
+                w $GPU/devfreq/min_freq "565000000"
+                w $GPU/devfreq/max_freq "$GPU_MAX_FREQ"
+                w $GPU/min_pwrlevel "$GPU_LVL_650"
+                w $GPU/max_pwrlevel "$GPU_LVL_800"
+                w $GPU/force_clk_on "1"
+                w $GPU/force_bus_on "1"
+                echo "0" > "$GPU/throttling" 2>/dev/null || true
+                dbg "GPU corrected: min=565MHz max=${GPU_MAX_FREQ}Hz"
+            fi
         }
 
     [ $(( TICK % 3 )) -eq 0 ] && {
@@ -462,7 +528,7 @@ while true; do
             lmh_disable
             cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
             w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "565000000"
-            w $GPU/devfreq/max_freq "800000000"; w $GPU/force_clk_on "1"
+            w $GPU/devfreq/max_freq "$GPU_MAX_FREQ"; w $GPU/force_clk_on "1"
             echo "0" > "$GPU/throttling" 2>/dev/null || true
             w /sys/class/power_supply/battery/system_temp_level "0"
             apply_irq_affinity; log "CPU+GPU+IRQ recovered"
@@ -478,15 +544,24 @@ elif [ "$STATE" = "DAILY" ]; then
             sched_daily; gpu_daily
         fi
     }
+elif [ "$STATE" = "THERMAL_RECOVERY" ]; then
+    [ $(( TICK % 6 )) -eq 0 ] && {
+        _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
+        if [ "$_dm" -gt "1300000" ] 2>/dev/null; then
+            cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
+            cpu_hotplug_offline_gold
+            sched_daily; gpu_daily
+        fi
+    }
     fi
 
     [ -n "$TARGET" ] && [ "$TARGET" != "$STATE" ] && {
         log "Transition: $STATE → $TARGET"
-        # Manuelle Transitions (Manual-Profil oder Thermal Recovery) immer ohne Debounce
         case "$TARGET" in
-            COOKING)       _enter_manual "COOKING"       ;;
-            THERMAL_LIMIT) _enter_no_debounce enter_thermal_limit ;;
-            DAILY)         _enter_manual "DAILY"         ;;
+            COOKING)           _enter_manual "COOKING"       ;;
+            THERMAL_LIMIT)     _enter_no_debounce enter_thermal_limit ;;
+            THERMAL_RECOVERY)  _enter_no_debounce enter_thermal_recovery ;;
+            DAILY)             _enter_manual "DAILY"         ;;
         esac
         write_data
     }

@@ -22,7 +22,7 @@ GPU=/sys/class/kgsl/kgsl-3d0
 P0=/sys/devices/system/cpu/cpufreq/policy0
 P6=/sys/devices/system/cpu/cpufreq/policy6
 
-GPU_LVL_800=0; GPU_LVL_650=1; GPU_LVL_267=5
+GPU_LVL_800=0; GPU_LVL_650=1; GPU_LVL_565=2; GPU_LVL_430=3; GPU_LVL_355=4; GPU_LVL_267=5; GPU_LVL_140=7
 GPU_MAX_FREQ=650000000
 
 CS_TOP="/dev/cpuset/top-app"
@@ -470,7 +470,7 @@ io_daily() {
         [ -d "$blk/queue" ] || continue
         w "$blk/queue/scheduler"     "mq-deadline"
         w "$blk/queue/read_ahead_kb" "512"
-        w "$blk/queue/nr_requests"   "128"
+        [ -d "$blk" ] && case "$(basename "$blk")" in mmcblk*) w "$blk/queue/nr_requests" "64" ;; *) w "$blk/queue/nr_requests" "128" ;; esac
         w "$blk/queue/iostats"       "1"
         w "$blk/queue/add_random"    "1"
     done
@@ -482,7 +482,7 @@ io_cooking() {
         [ -d "$blk/queue" ] || continue
         w "$blk/queue/scheduler"     "mq-deadline"
         w "$blk/queue/read_ahead_kb" "128"
-        w "$blk/queue/nr_requests"   "128"
+        w "$blk/queue/nr_requests"   "64"
         w "$blk/queue/iostats"       "0"
         w "$blk/queue/add_random"    "0"
     done
