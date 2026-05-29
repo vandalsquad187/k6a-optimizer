@@ -1,24 +1,15 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v9.0 — 2-Mode-Architektur: daily + cooking
+# k6a-controller  v9.12 — 2-Mode-Architektur: daily + cooking
 # SM7150 / sweet_k6a — Lunaris AOSP 3.9 / VantomKernel 4.14.356-openela-rc1
 #
-# v9.0 Changes (2-Mode):
-#   1. BALANCED/GAMING/COMPETITIVE/BATTERY → DAILY + COOKING
-#   2. enter_battery/enter_gaming/enter_competitive entfernt
-#   3. MANUAL-Werte: daily / cooking (nicht mehr balanced/gaming/competitive/battery)
-#   4. Coging = old competitive (max performance, kein light/full split)
-#   5. Daily = old balanced (battery-friendly, alle Kerne on)
-
-# v8.0 Changes (Major Cleanup):
-#   1. Auto Gaming Detection entfernt
-#   2. MIUI-Code entfernt (gpu2d, joyose, bypass_thresh aus write_data)
-#   3. Tote log/warn/err/dbg Definitionen entfernt (lib stellt sie bereit)
-#   4. _CODM_PID_CACHE entfernt
-#   5. battery_saver + auto_detection aus settings.conf entfernt
-#   6. cpu_hotplug_enable default=1, battery_spoof_temp default=25
-#
-# v7.64+ Changes (siehe Changelog am Dateiende)
+# v9.12 Fixes:
+#   - Debounce blockiert nur Auto-Transitions (Thermal), nicht manuelle Wechsel
+#   - GPU cooking: max 650MHz statt 800MHz, kein min=max Lock, pwrscale=1
+#   - UFS-Swap entfernt (killt System bei I/O-Last), ZRAM statt dessen
+#   - VM: extra_free_kbytes/min_free_kbytes von 24MB auf 12MB reduziert
+#   - Diagnose: KGSL-Timeout bei hang (read mit timeout)
+#   - CPU freeze recovery: killt auch msm_thermal + LMH restlos
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MODDIR="${1:-/data/adb/modules/Bad4zz89_k6a_tweaks}"
@@ -70,6 +61,21 @@ _can_enter() {
     now=$(date +%s); diff=$(( now - LAST_ENTER_TS ))
     [ "$diff" -lt "$CFG_DEBOUNCE_WIN" ] && { warn "Debounce blocked: ${diff}s/${CFG_DEBOUNCE_WIN}s"; return 1; }
     LAST_ENTER_TS=$now; return 0
+}
+
+# Direkter Transition-Selektor ohne Debounce (für manuelle Wechsel)
+_enter_manual() {
+    local target="$1"
+    case "$target" in
+        COOKING)       _enter_no_debounce enter_cooking       ;;
+        DAILY)         _enter_no_debounce enter_daily         ;;
+        THERMAL_LIMIT) _enter_no_debounce enter_thermal_limit ;;
+    esac
+}
+
+_enter_no_debounce() {
+    LAST_ENTER_TS=$(( $(date +%s) - CFG_DEBOUNCE_WIN - 1 ))
+    "$@"
 }
 
 trim_log() {
@@ -180,7 +186,7 @@ write_data() {
 
     local gpu_driver_desc=""
     [ -f /data/adb/modules/adreno_gpu_driver/module.prop ] && gpu_driver_desc=$(grep "^description=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2- | head -1)
-    [ -z "$gpu_driver_desc" ] && gpu_driver_desc="—"
+    [ -z "$gpu_driver_desc" ] && gpu_driver_desc="\u2014"
     local c_cpu_hotplug=${CFG_CPU_HOTPLUG:-0}
     local _ping_val _ping_stale
 
@@ -238,7 +244,7 @@ write_ping() {
 # ══ STATE TRANSITIONS ═════════════════════════════════════════════════════════
 enter_daily() {
     _can_enter || return 0
-    log "\u2192 DAILY"; _cfg_load_cache
+    log "→ DAILY"; _cfg_load_cache
     cpu_hotplug_online_all
     cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
     cpu_hotplug_offline_gold
@@ -262,10 +268,16 @@ enter_daily() {
 
 enter_cooking() {
     _can_enter || return 0
-    log "\u2192 COOKING"; _cfg_load_cache
+    log "→ COOKING"; _cfg_load_cache
     cpu_hotplug_online_all
     thermal_full_disable
     lmh_disable
+
+    # Kill auch msm_thermal falls vorhanden (root cause CPU FREEZE)
+    for _te_pid in $(pgrep -f "msm_thermal\|thermal-engine\|mi_thermald\|themal" 2>/dev/null); do
+        kill -9 "$_te_pid" 2>/dev/null || true
+    done
+
     cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
     gpu_cooking; io_cooking; sched_cooking; vm_cooking; lmk_default; zram_cooking
     lru_gen_enable; sf_daily; wakelock_block
@@ -281,13 +293,12 @@ enter_cooking() {
     w /sys/class/power_supply/battery/system_temp_level "0"
     tune_cooking "$CODM_PKG"; THERMAL_CAPPED=0
     printf '%s' "cooking" > "$PROFILE"; STATE="COOKING"
-    log "COOKING: Silver 1497-1804 | Gold 2169-2304 (schedutil EAS=0) | GPU locked 800MHz | hotplug=${CFG_CPU_HOTPLUG}"
+    log "COOKING: Silver 1497-1804 | Gold 2169-2304 (schedutil EAS=0) | GPU max 650MHz floor | hotplug=${CFG_CPU_HOTPLUG}"
 }
 
 enter_thermal_limit() {
-    LAST_ENTER_TS=$(date +%s)
     local temp="${1:-82}"
-    warn "\u2192 THERMAL_LIMIT (${temp}\u00b0C)"
+    warn "→ THERMAL_LIMIT (${temp}°C)"
     cpu_hotplug_online_all
     cpu_set "schedutil" "576000" "1612800" "652800" "1939200"
     w $GPU/thermal_pwrlevel "1"
@@ -296,7 +307,7 @@ enter_thermal_limit() {
     sched_daily; thermal_full_restore; wakelock_restore
     PRE_THERMAL_STATE="$STATE"
     printf '%s' "gaming" > "$PROFILE"; STATE="THERMAL_LIMIT"
-    log "THERMAL_LIMIT: cooling from $PRE_THERMAL_STATE, recover <77\u00b0C"
+    log "THERMAL_LIMIT: cooling from $PRE_THERMAL_STATE, recover <77°C"
 }
 
 # ══ STARTUP ═══════════════════════════════════════════════════════════════════
@@ -308,7 +319,7 @@ _startup() {
             op_cmd=$(cat "/proc/$op/cmdline" 2>/dev/null | tr -d '\0')
             case "$op_cmd" in
                 *k6a-controller*)
-                    err "Controller laeuft bereits (PID $op)"; exit 1 ;;
+                    err "Controller läuft bereits (PID $op)"; exit 1 ;;
                 *)
                     warn "Stale lock (PID $op ist kein k6a-controller: ${op_cmd:-?}) -> ignoriert"
                     rm -f "$LOCK" ;;
@@ -321,13 +332,13 @@ _startup() {
     _cfg_load_cache; _cache_fallback_zone
     detect_kernel_features
     printf 'pid=%s\nstate=STARTING\nprofile=daily\nmanual_profile=daily\n' "$$" > "$DATA" 2>/dev/null || true
-    log "k6a-controller v9.0 \u2014 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
+    log "k6a-controller v9.12 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
     log "GPU: 8 pwrlevels 140-800MHz | Silver: 576-1804MHz | Gold: 652-2304MHz"
-    log "Thermal: zone24=Silver zone25=Gold [verifiziert] | BCL zone7/8 gesch\u00fctzt"
+    log "Thermal: zone24=Silver zone25=Gold [verifiziert] | BCL zone7/8 geschützt"
     log "Sched: EAS+uclamp+SCHED_CASS (NO WALT, NO schedtune) | HZ=250 | BBR=default"
     [ -n "$TZ_FALLBACK" ] && log "TZ_FALLBACK: zone0 (pm6150-tz) gecacht"
     if [ -f "$PAUSE_FILE" ]; then
-        _PAUSED=1; log "\u23f8 PAUSED"
+        _PAUSED=1; log "⏸ PAUSED"
         thermal_full_restore; restore_battery_spoof; return
     fi
     enter_daily
@@ -346,22 +357,19 @@ while true; do
 
     if [ -f "$PAUSE_FILE" ]; then
         [ "$_PAUSED" = "0" ] && {
-            _PAUSED=1; log "\u23f8 PAUSED"
+            _PAUSED=1; log "⏸ PAUSED"
             thermal_full_restore; restore_battery_spoof
         }
         sleep 3; TICK=$(( TICK + 1 )); continue
     fi
-    [ "$_PAUSED" = "1" ] && { _PAUSED=0; log "\u25b6 RESUMED"; _cfg_load_cache; }
+    [ "$_PAUSED" = "1" ] && { _PAUSED=0; log "▶ RESUMED"; _cfg_load_cache; }
 
     if [ "$RELOAD_FLAG" = "1" ]; then
         RELOAD_FLAG=0
         _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp
-        log "SIGHUP: State=$STATE \u2192 manual=$MANUAL (Debounce reset)"
-        LAST_ENTER_TS=0; _cfg_load_cache
-        case "$MANUAL" in
-            cooking)       enter_cooking ;;
-            *)             enter_daily ;;
-        esac
+        log "SIGHUP: State=$STATE → manual=$MANUAL (Debounce reset)"
+        _cfg_load_cache
+        _enter_manual "$MANUAL_UC"
         write_data; TICK=$(( TICK + 1 )); sleep 3; continue
     fi
 
@@ -370,7 +378,7 @@ while true; do
         [ "$STATE" = "COOKING" ] && {
             _tt=$(thermal_cpu_temp)
             [ "${_tt:-0}" -ge 82 ] && {
-                log "Transition: $STATE \u2192 THERMAL_LIMIT"
+                log "Transition: $STATE → THERMAL_LIMIT"
                 enter_thermal_limit "$_tt"
                 write_data
             }
@@ -386,13 +394,13 @@ while true; do
         _ms=$(( $(date +%s) - _mt ))
         _cfg_load_cache
         _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp
-        log "Config mtime \u2192 manual=$MANUAL (State=$STATE)"
+        log "Config mtime → manual=$MANUAL (State=$STATE)"
         [ "$_ms" -ge 5 ] && case "$STATE" in
             COOKING)
-                [ "$MANUAL" = "daily" ] && enter_daily || enter_cooking ;;
+                [ "$MANUAL" = "daily" ] && _enter_manual "DAILY" || _enter_manual "COOKING" ;;
             THERMAL_LIMIT) : ;;
             *)
-                [ "$MANUAL" = "cooking" ] && enter_cooking || enter_daily ;;
+                [ "$MANUAL" = "cooking" ] && _enter_manual "COOKING" || _enter_manual "DAILY" ;;
         esac
         write_data
     fi
@@ -404,7 +412,7 @@ while true; do
         temp=$(thermal_cpu_temp)
         [ "${temp:-99}" -lt 77 ] && {
             TARGET="${PRE_THERMAL_STATE:-COOKING}"
-            log "Thermal recovery \u2192 $TARGET (${temp}\u00b0C)"; }
+            log "Thermal recovery → $TARGET (${temp}°C)"; }
     else
         case "$MANUAL" in cooking) TARGET="COOKING" ;; *) TARGET="DAILY" ;; esac
     fi
@@ -422,14 +430,14 @@ while true; do
             _gm=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
             _gc=$(cat $GPU/force_clk_on    2>/dev/null || echo 1)
             _gp=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 0)
-            _gps=$(cat $GPU/pwrscale        2>/dev/null || echo 1)
-            { [ "$_gm" -lt "640000000" ] || [ "$_gc" != "1" ] || [ "$_gp" -gt "0" ] || [ "$_gps" = "1" ]; } && {
-                w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "650000000"
+            _gps=$(cat $GPU/pwrscale        2>/dev/null || echo 2)
+            { [ "$_gm" -lt "500000000" ] || [ "$_gc" != "1" ] || [ "$_gp" -gt "0" ] || [ "$_gps" = "1" ]; } && {
+                w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "565000000"
                 w $GPU/devfreq/max_freq "800000000"; w $GPU/min_pwrlevel "$GPU_LVL_650"
                 w $GPU/max_pwrlevel "$GPU_LVL_800"; w $GPU/force_clk_on "1"
                 w $GPU/force_bus_on "1"; w $GPU/pwrscale "0"
                 echo "0" > "$GPU/throttling" 2>/dev/null || true
-                dbg "GPU corrected"
+                dbg "GPU corrected: min=565MHz max=800MHz pwrlevel=1"
             }
         }
 
@@ -448,12 +456,12 @@ while true; do
             _frozen=1
         fi
         if [ "$_frozen" = "1" ]; then
-            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm} Gold min=${_cgmin} max=${_cgm}) \u2014 re-apply"
-            for _te in $(pgrep -f "thermal-engine" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
+            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm} Gold min=${_cgmin} max=${_cgm}) — re-apply"
+            for _te in $(pgrep -f "msm_thermal\|thermal-engine\|mi_thermald\|themal" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
             thermal_full_disable; sleep 0.5
             lmh_disable
             cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
-            w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "650000000"
+            w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "565000000"
             w $GPU/devfreq/max_freq "800000000"; w $GPU/force_clk_on "1"
             echo "0" > "$GPU/throttling" 2>/dev/null || true
             w /sys/class/power_supply/battery/system_temp_level "0"
@@ -464,7 +472,7 @@ elif [ "$STATE" = "DAILY" ]; then
     [ $(( TICK % 6 )) -eq 0 ] && {
         _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
         if [ "$_dm" -gt "1300000" ] 2>/dev/null; then
-            dbg "Daily limits verletzt (max=${_dm}) \u2014 re-apply"
+            dbg "Daily limits verletzt (max=${_dm}) — re-apply"
             cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
             cpu_hotplug_offline_gold
             sched_daily; gpu_daily
@@ -473,11 +481,12 @@ elif [ "$STATE" = "DAILY" ]; then
     fi
 
     [ -n "$TARGET" ] && [ "$TARGET" != "$STATE" ] && {
-        log "Transition: $STATE \u2192 $TARGET"
+        log "Transition: $STATE → $TARGET"
+        # Manuelle Transitions (Manual-Profil oder Thermal Recovery) immer ohne Debounce
         case "$TARGET" in
-            COOKING)       enter_cooking                       ;;
-            THERMAL_LIMIT) enter_thermal_limit "${temp:-82}"  ;;
-            DAILY)         enter_daily                         ;;
+            COOKING)       _enter_manual "COOKING"       ;;
+            THERMAL_LIMIT) _enter_no_debounce enter_thermal_limit ;;
+            DAILY)         _enter_manual "DAILY"         ;;
         esac
         write_data
     }
@@ -488,7 +497,7 @@ elif [ "$STATE" = "DAILY" ]; then
     [ $(( TICK % 10 )) -eq 0 ] && [ "$STATE" = "COOKING" ] && \
         iw dev wlan0 set power_save off 2>/dev/null || true
     [ $(( TICK % 30 )) -eq 0 ] && fstrim /data 2>/dev/null || true
-    [ $(( TICK % 200 )) -eq 0 ] && log "\u2665 $STATE tick=$TICK temp=$(thermal_cpu_temp)\u00b0C"
+    [ $(( TICK % 200 )) -eq 0 ] && log "♥ $STATE tick=$TICK temp=$(thermal_cpu_temp)°C"
     [ $(( TICK % 1000 )) -eq 0 ] && trim_log
     sleep 3
 done

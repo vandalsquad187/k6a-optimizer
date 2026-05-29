@@ -1,7 +1,8 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a Optimizer — Diagnose Script v9.7
+# k6a Optimizer — Diagnose Script v9.8
 # Nutzung: su -c "sh /data/adb/modules/Bad4zz89_k6a_tweaks/bin/k6a-diagnose.sh"
+# Fix: KGSL-Loops mit Timeout (read blockiert bei GPU-Hang)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MODDIR="/data/adb/modules/Bad4zz89_k6a_tweaks"
@@ -11,6 +12,13 @@ PROFILE="$MODDIR/config/active_profile"
 MANUAL="$MODDIR/config/manual_profile"
 
 SEP="============================================================"
+
+# Timeout-Lesefunktion — verhindert Blockade bei defekten sysfs-Nodes
+safe_read() {
+    local file="$1" timeout="${2:-1}" result=""
+    result=$(timeout "$timeout" cat "$file" 2>/dev/null || echo "TIMEOUT")
+    printf '%s' "$result"
+}
 
 echo "$SEP"
 echo "k6a Optimizer — Diagnose $(date '+%Y-%m-%d %H:%M:%S')"
@@ -87,16 +95,16 @@ echo ""
 # ── GPU STATUS ────────────────────────────────────────────────────────────────
 echo "[ GPU — Adreno 618 ]"
 GPU="/sys/class/kgsl/kgsl-3d0"
-gpu_gov=$(cat $GPU/devfreq/governor 2>/dev/null || echo "N/A")
-gpu_min=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo "N/A")
-gpu_max=$(cat $GPU/devfreq/max_freq 2>/dev/null || echo "N/A")
-gpu_cur=$(cat $GPU/devfreq/cur_freq 2>/dev/null || echo "N/A")
-gpu_pwr_min=$(cat $GPU/min_pwrlevel 2>/dev/null || echo "N/A")
-gpu_pwr_max=$(cat $GPU/max_pwrlevel 2>/dev/null || echo "N/A")
-gpu_thermal=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo "N/A")
-gpu_clk=$(cat $GPU/force_clk_on 2>/dev/null || echo "N/A")
-gpu_bus=$(cat $GPU/force_bus_on 2>/dev/null || echo "N/A")
-gpu_throttle=$(cat $GPU/throttling 2>/dev/null || echo "N/A")
+gpu_gov=$(safe_read "$GPU/devfreq/governor")
+gpu_min=$(safe_read "$GPU/devfreq/min_freq")
+gpu_max=$(safe_read "$GPU/devfreq/max_freq")
+gpu_cur=$(safe_read "$GPU/devfreq/cur_freq")
+gpu_pwr_min=$(safe_read "$GPU/min_pwrlevel")
+gpu_pwr_max=$(safe_read "$GPU/max_pwrlevel")
+gpu_thermal=$(safe_read "$GPU/thermal_pwrlevel")
+gpu_clk=$(safe_read "$GPU/force_clk_on")
+gpu_bus=$(safe_read "$GPU/force_bus_on")
+gpu_throttle=$(safe_read "$GPU/throttling")
 
 echo "  governor       : $gpu_gov"
 echo "  min_freq       : $gpu_min"
@@ -114,7 +122,7 @@ for node in force_bus_vote force_clk_vote perf_mode gpu_clock gpu_busy gpu_load 
             gpu_preemption_stride gpu_preemption_latency gpu_rt_busy gpu_rt_level \
             pwrscale sched_0 sched_1 sched_2 sched_3 sched_4 sched_5 sched_6 sched_7; do
     nfile="$GPU/$node"
-    [ -f "$nfile" ] && echo "  ${node}       : $(cat "$nfile" 2>/dev/null)"
+    [ -f "$nfile" ] && echo "  ${node}       : $(safe_read "$nfile")"
 done
 
 # Adreno GPU Driver Modul erkennen
@@ -126,7 +134,7 @@ if [ -d /data/adb/modules/adreno_gpu_driver ]; then
 fi
 
 # Zusätzliche KGSL Nodes
-gpu_avail_freq=$(cat $GPU/gpu_available_frequencies 2>/dev/null || echo "N/A")
+gpu_avail_freq=$(safe_read "$GPU/gpu_available_frequencies")
 echo "  available_freqs: $gpu_avail_freq"
 
 # Adreno Driver Modul — vollständige Info
@@ -142,23 +150,23 @@ if [ -d /data/adb/modules/adreno_gpu_driver ]; then
     [ -n "$author" ] && echo "  author           : $author"
 fi
 
-# ── KGSL KOMPLETT-DUMP (für Adreno 0819.0 Treibertest) ─────────────────────────
+# ── KGSL KOMPLETT-DUMP (mit Timeout, hängt bei GPU-Crash) ─────────────────────
 echo "[ KGSL — alle Nodes ]"
 for entry in /sys/class/kgsl/kgsl-3d0/*; do
     [ -f "$entry" ] || continue
     name="${entry##*/}"
-    val=$(cat "$entry" 2>/dev/null | tr '\n' ' ' | head -c 80 || echo 'N/A')
+    val=$(safe_read "$entry" 1 | tr '\n' ' ' | head -c 80)
     echo "  $name = $val"
 done
 for entry in /sys/class/kgsl/kgsl-3d0/devfreq/*; do
     [ -f "$entry" ] || continue
     name="devfreq/${entry##*/}"
-    val=$(cat "$entry" 2>/dev/null | tr '\n' ' ' | head -c 80 || echo 'N/A')
+    val=$(safe_read "$entry" 1 | tr '\n' ' ' | head -c 80)
     echo "  $name = $val"
 done
 echo ""
 
-# ── UNBEKANNTE KGSL-NODES (Neuzugänge durch Adreno Treiber) ───────────────────
+# ── UNBEKANNTE KGSL-NODES ─────────────────────────────────────────────────────
 echo "[ KGSL — unbekannte / neue Nodes ]"
 for entry in /sys/class/kgsl/kgsl-3d0/*; do
     [ -f "$entry" ] || continue
@@ -172,7 +180,7 @@ for entry in /sys/class/kgsl/kgsl-3d0/*; do
         snapshots|wake_mask|pwrscale|gpuclk|gpubusy|devfreq|\
         gpu_llc_slice_enable|gpu_rt_busy|gpu_rt_level|cluster*) continue ;;
     esac
-    val=$(cat "$entry" 2>/dev/null | tr '\n' ' ' | head -c 80 || echo 'N/A')
+    val=$(safe_read "$entry" 1 | tr '\n' ' ' | head -c 80)
     echo "  $name = $val"
 done
 echo ""
@@ -347,9 +355,6 @@ if [ -n "$swap_total" ] && [ "$swap_total" -gt 0 ] 2>/dev/null; then
     swap_used=$(( swap_total - swap_free ))
     swap_pct=$(( swap_used * 100 / swap_total ))
     echo "  Swap: ${swap_used}K / ${swap_total}K (${swap_pct}%)"
-    if [ -f /data/k6a_swap ]; then
-        echo "  Swapfile: /data/k6a_swap ($(du -h /data/k6a_swap 2>/dev/null | cut -f1))"
-    fi
 fi
 echo ""
 

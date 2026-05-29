@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-lib.sh  v2.3
+# k6a-lib.sh  v2.4
 # Hardware / Scheduler / Network / App-Detection Library
 # Einbinden: . "$MODDIR/bin/k6a-lib.sh"  (POSIX-kompatibel, busybox-sicher)
 #
@@ -23,7 +23,7 @@ P0=/sys/devices/system/cpu/cpufreq/policy0
 P6=/sys/devices/system/cpu/cpufreq/policy6
 
 GPU_LVL_800=0; GPU_LVL_650=1; GPU_LVL_267=5
-GPU_MAX_FREQ=800000000
+GPU_MAX_FREQ=650000000
 
 CS_TOP="/dev/cpuset/top-app"
 CS_FG="/dev/cpuset/foreground"
@@ -117,10 +117,13 @@ gpu_detect_max_freq() {
     local freqs avail
     [ -f "$GPU/gpu_available_frequencies" ] || return
     freqs=$(cat "$GPU/gpu_available_frequencies" 2>/dev/null)
+    GPU_MAX_FREQ=650000000
     for avail in $freqs; do
         [ "${avail:-0}" -gt "$GPU_MAX_FREQ" ] 2>/dev/null && GPU_MAX_FREQ=$avail
     done
-    _dbg "GPU max freq: ${GPU_MAX_FREQ}Hz"
+    # Begrenze auf 650MHz für sweet2 — 800MHz verursacht GPU-Hang bei langer Last
+    [ "$GPU_MAX_FREQ" -gt "650000000" ] && GPU_MAX_FREQ=650000000
+    _dbg "GPU max freq: ${GPU_MAX_FREQ}Hz (capped at 650MHz for stability)"
 }
 
 gpu_daily() {
@@ -145,14 +148,14 @@ gpu_cooking() {
     w $GPU/bus_split               "0"
     w $GPU/thermal_pwrlevel        "0"
     w $GPU/max_pwrlevel            "$GPU_LVL_800"
-    w $GPU/min_pwrlevel            "$GPU_LVL_800"
+    w $GPU/min_pwrlevel            "$GPU_LVL_650"
     w $GPU/devfreq/max_freq        "$GPU_MAX_FREQ"
-    w $GPU/devfreq/min_freq        "$GPU_MAX_FREQ"
-    w $GPU/devfreq/polling_interval "2"
-    w $GPU/pwrscale                "0"
+    w $GPU/devfreq/min_freq        "565000000"
+    w $GPU/devfreq/polling_interval "5"
+    w $GPU/pwrscale                "1"
     w $GPU/adreno_idler_active     "0"
     echo "0" > "$GPU/throttling"   2>/dev/null || true
-    dbg "GPU cooking: locked ${GPU_MAX_FREQ}Hz pwrscale=0"
+    dbg "GPU cooking: max ${GPU_MAX_FREQ}Hz floor=565MHz pwrscale=1 (thermal_pwrlevel=0)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -269,13 +272,14 @@ thermal_stop_daemons() {
     setprop ctl.stop vendor.msm_irqbalance 2>/dev/null || true
     for pid in $(pgrep -x "msm_irqbalance" 2>/dev/null); do kill -9 "$pid" 2>/dev/null || true; done
     for svc in vendor.thermal-engine mi_thermald thermal-engine thermald \
-               android.hardware.thermal-service.qti vendor.thermal; do
+               android.hardware.thermal-service.qti vendor.thermal msm_thermal; do
         stop "$svc" 2>/dev/null || true
         setprop ctl.stop "$svc" 2>/dev/null || true
     done
     sleep 0.3
     for pid in $(pgrep -f "thermal" 2>/dev/null); do kill -9 "$pid" 2>/dev/null || true; done
     for pid in $(pgrep -x "mi_thermald" 2>/dev/null); do kill -9 "$pid" 2>/dev/null || true; done
+    for pid in $(pgrep -f "msm_thermal" 2>/dev/null); do kill -9 "$pid" 2>/dev/null || true; done
     sleep 0.3
     local te
     for te in /vendor/bin/thermal-engine /system/bin/thermal-engine \
@@ -478,7 +482,7 @@ io_cooking() {
         [ -d "$blk/queue" ] || continue
         w "$blk/queue/scheduler"     "mq-deadline"
         w "$blk/queue/read_ahead_kb" "128"
-        w "$blk/queue/nr_requests"   "64"
+        w "$blk/queue/nr_requests"   "128"
         w "$blk/queue/iostats"       "0"
         w "$blk/queue/add_random"    "0"
     done
@@ -494,32 +498,28 @@ vm_daily() {
     w /proc/sys/vm/dirty_background_ratio "5"
     w /proc/sys/vm/dirty_expire_centisecs "3000"
     w /proc/sys/vm/dirty_writeback_centisecs "500"
-    w /proc/sys/vm/extra_free_kbytes      "24576"
+    w /proc/sys/vm/extra_free_kbytes      "12288"
     w /proc/sys/vm/watermark_scale_factor  "10"
-    w /proc/sys/vm/min_free_kbytes         "11065"
-    swapoff /data/k6a_swap 2>/dev/null || true
+    w /proc/sys/vm/min_free_kbytes         "8192"
+    timeout 5 swapoff /data/k6a_swap 2>/dev/null || true
     mkswap /dev/block/zram0 2>/dev/null
-    swapon /dev/block/zram0 2>/dev/null || true
+    timeout 5 swapon -p 1 /dev/block/zram0 2>/dev/null || true
 }
 
 vm_cooking() {
-    w /proc/sys/vm/swappiness             "10"
+    w /proc/sys/vm/swappiness             "30"
     w /proc/sys/vm/vfs_cache_pressure     "50"
     w /proc/sys/vm/dirty_ratio            "10"
     w /proc/sys/vm/dirty_background_ratio "3"
     w /proc/sys/vm/dirty_expire_centisecs "100"
     w /proc/sys/vm/dirty_writeback_centisecs "50"
-    w /proc/sys/vm/extra_free_kbytes      "24576"
+    w /proc/sys/vm/extra_free_kbytes      "12288"
     w /proc/sys/vm/watermark_scale_factor  "30"
-    w /proc/sys/vm/min_free_kbytes         "24576"
+    w /proc/sys/vm/min_free_kbytes         "12288"
     w /proc/sys/vm/page-cluster           "0"
-    swapoff /dev/block/zram0 2>/dev/null || true
-    if [ ! -f /data/k6a_swap ]; then
-        fallocate -l 2G /data/k6a_swap 2>/dev/null || \
-        dd if=/dev/zero of=/data/k6a_swap bs=1M count=2048 2>/dev/null
-        mkswap /data/k6a_swap 2>/dev/null
-    fi
-    swapon /data/k6a_swap 2>/dev/null || true
+    timeout 5 swapoff /dev/block/zram0 2>/dev/null || true
+    timeout 5 swapon -p 0 /dev/block/zram0 2>/dev/null || true
+    _log "VM cooking: ZRAM statt UFS-Swap, extra_free=12MB, min_free=12MB"
 }
 
 lmk_default() { w /sys/module/lowmemorykiller/parameters/minfree "18432,23040,27648,32256,55296,80640"; }
@@ -535,7 +535,7 @@ zram_cooking() {
     swap_used=$(( swap_total - $(grep SwapFree /proc/meminfo | awk '{print $2}') ))
     pct=0; [ "${swap_total:-0}" -gt 0 ] && pct=$(( swap_used * 100 / swap_total ))
     w /proc/sys/vm/page-cluster "0"
-    _dbg "Swap: UFS-${swap_used}K/${swap_total}K (${pct}%) page-cluster=0"
+    _dbg "Swap: ${swap_used}K/${swap_total}K (${pct}%) page-cluster=0"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
