@@ -1,1308 +1,503 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v7.3
-# SM7150 (Snapdragon 730G) / sweet_k6a — Lunaris 3.8 AOSP / Openela 4.14.356
+# k6a-controller  v9.1 — 2-Mode-Architektur: daily + cooking
+# SM7150 / sweet_k6a — Lunaris AOSP 3.9 / VantomKernel 4.14.356-openela-rc1
 #
-# DESIGN PRINCIPLES (learned from Encore + LickT):
-#
-#  1. SINGLE WRITER — only this process writes sysfs nodes. No shell forks
-#     that race against the kernel governor.
-#
-#  2. ENCORE ARCHITECTURE — minimal shell wrapper, daemon does everything.
-#     inotify-style config detection via mtime polling (shell limitation).
-#
-#  3. LIKT THERMAL APPROACH — thermal manager is a contained function that
-#     only disables thermal zones / stops thermal services. It does NOT touch
-#     CPU frequencies. The governor handles frequency. We handle headroom.
-#
-#  4. GOVERNOR FIRST — schedutil is set once at boot. We do NOT constantly
-#     re-write min/max frequencies in the polling loop. We set them once on
-#     state transition and leave the governor alone.
-#
-#  5. STATE MACHINE — clean enter_* functions, no partial state.
-#     BALANCED → GAMING → COMPETITIVE
-#         ↓          ↓         ↓
-#     BATTERY   THERMAL_LIMIT  THERMAL_LIMIT
-#                   ↓
-#               AUTO-RECOVER → zurück zu vorherigem State
-#
-# Hardware (confirmed via Termux):
-#   Silver  cpu0-5   policy0   max 1804800 Hz
-#   Gold    cpu6-7   policy6   max 2208000 Hz
-#   GPU     Adreno 618   /sys/class/kgsl/kgsl-3d0
-#   Kernel  Openela 4.14.356 — WALT scheduler, schedtune, CAF
+# v9.1 Fixes:
+#   - Debounce blockiert nur Auto-Transitions (Thermal), nicht manuelle Wechsel
+#   - GPU cooking: max 650MHz statt 800MHz, kein min=max Lock, pwrscale=1
+#   - UFS-Swap entfernt (killt System bei I/O-Last), ZRAM statt dessen
+#   - VM: extra_free_kbytes/min_free_kbytes von 24MB auf 12MB reduziert
+#   - Diagnose: KGSL-Timeout bei hang (read mit timeout)
+#   - CPU freeze recovery: killt auch msm_thermal + LMH restlos
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MODDIR="${1:-/data/adb/modules/Bad4zz89_k6a_tweaks}"
+
 CONFIG="$MODDIR/config/settings.conf"
 FREEZE="$MODDIR/config/freeze.conf"
 LOG="$MODDIR/config/service.log"
 PROFILE="$MODDIR/config/active_profile"
 DATA="$MODDIR/webroot/data.txt"
-FREEZE_DUMP="$MODDIR/webroot/freeze_dump.txt"
 CACHE_TRIGGER="$MODDIR/config/clean_cache_now"
 CACHE_LAST="$MODDIR/config/cache_last_cleaned"
 RAM_TRIGGER="$MODDIR/config/clean_ram_now"
+PAUSE_FILE="$MODDIR/run/pause"
+APP_EVENT="$MODDIR/run/app_event"
+THERMAL_EVENT="$MODDIR/run/thermal_event"
 MANUAL_P="$MODDIR/config/manual_profile"
 LOCK="$MODDIR/run/controller.pid"
 
-# ── Confirmed sysfs paths — sweet_k6a SM7150 ──────────────────────────────────
-GPU=/sys/class/kgsl/kgsl-3d0
-SU_SIL=/sys/devices/system/cpu/cpufreq/policy0/schedutil   # Silver cpu0-5
-SU_GOLD=/sys/devices/system/cpu/cpufreq/policy6/schedutil  # Gold   cpu6-7
+. "$MODDIR/bin/k6a-lib.sh"
 
-# ── Runtime ───────────────────────────────────────────────────────────────────
-STATE="IDLE"
-PRE_THERMAL_STATE="BALANCED"
-THERMAL_WAS_DISABLED=0   # state to return to after THERMAL_LIMIT
-LAST_APP=""
-LAST_CFG_MTIME=0
-LAST_FREEZE_TRIGGER=""
-TICK=0
+LOG_FILE="$LOG"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PRIMITIVES
-# ═══════════════════════════════════════════════════════════════════════════════
-log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1" >> "$LOG"; }
-dbg() { [ "$DEBUG" = "1" ] && printf '[%s][DBG] %s\n' "$(date '+%H:%M:%S')" "$1" >> "$LOG"; }
-cfg() { grep "^${1}=" "$CONFIG" 2>/dev/null | cut -d= -f2; }
+TZ_GOLD="/sys/devices/virtual/thermal/thermal_zone25/temp"
+TZ_SILVER="/sys/devices/virtual/thermal/thermal_zone24/temp"
 
-# Atomic sysfs write — silently ignore unsupported nodes
-w() {
-    local node="$1" val="$2"
-    [ -f "$node" ] || [ -d "${node%/*}" ] && echo "$val" > "$node" 2>/dev/null || true
+STATE="IDLE"; PRE_THERMAL_STATE="COOKING"
+LAST_APP=""; LAST_CFG_MTIME=0
+LAST_FREEZE_TRIGGER=""; TICK=0; THERMAL_CAPPED=0
+PREV_TEMP=-1; TZ_FALLBACK=""; _RIL_PINNED=0; NET_TYPE="lte"; _TEMP_HIST=""
+_THERMAL_DAEMONS_STOPPED=0; LAST_ENTER_TS=0; _PAUSED=0; MANUAL="daily"
+THERMAL_PREDICT_TEMP=88; THERMAL_PREDICT_RATE=3
+GOLD_MAX_NORMAL="2304000"; GOLD_MAX_CAP="2169600"; _THERMAL_PREDICT_RECOVER=80
+
+# ══ PRIMITIVES ════════════════════════════════════════════════════════════════
+cfg()  { grep "^${1}=" "$CONFIG" 2>/dev/null | cut -d= -f2; }
+
+_cfg_load_cache() {
+    CFG_CPU_HOTPLUG=$(cfg cpu_hotplug_enable);  CFG_CPU_HOTPLUG=${CFG_CPU_HOTPLUG:-0}
+    DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
+    CFG_DEBUG=$DEBUG
+    CFG_DEBOUNCE_WIN=$(cfg debounce_window); CFG_DEBOUNCE_WIN=${CFG_DEBOUNCE_WIN:-5}
+    [ "$CFG_DEBOUNCE_WIN" -lt 0 ] 2>/dev/null && CFG_DEBOUNCE_WIN=0
+    [ "$CFG_DEBOUNCE_WIN" -gt 60 ] 2>/dev/null && CFG_DEBOUNCE_WIN=60
+    CFG_NET_QOS=$(cfg net_qos_enable); CFG_NET_QOS=${CFG_NET_QOS:-0}
 }
 
-# ── Log rotation — byte-basiert ───────────────────────────────────────────────
-# Rotiert bei 100 KB. Behält die letzten 50 KB — kein Datenverlust, kein
-# unbegrenztes Wachstum (Watchdog-Loop kann in Stunden GB produzieren).
+_can_enter() {
+    local now diff
+    now=$(date +%s); diff=$(( now - LAST_ENTER_TS ))
+    [ "$diff" -lt "$CFG_DEBOUNCE_WIN" ] && { warn "Debounce blocked: ${diff}s/${CFG_DEBOUNCE_WIN}s"; return 1; }
+    LAST_ENTER_TS=$now; return 0
+}
+
+# Direkter Transition-Selektor ohne Debounce (für manuelle Wechsel)
+_enter_manual() {
+    local target="$1"
+    case "$target" in
+        COOKING)       _enter_no_debounce enter_cooking       ;;
+        DAILY)         _enter_no_debounce enter_daily         ;;
+        THERMAL_LIMIT) _enter_no_debounce enter_thermal_limit ;;
+    esac
+}
+
+_enter_no_debounce() {
+    LAST_ENTER_TS=$(( $(date +%s) - CFG_DEBOUNCE_WIN - 1 ))
+    "$@"
+}
+
 trim_log() {
     [ -f "$LOG" ] || return
-    local size
-    size=$(wc -c < "$LOG" 2>/dev/null) || return
-    if [ "$size" -gt 102400 ]; then
-        local tmp="${LOG}.tmp"
-        tail -c 51200 "$LOG" > "$tmp" && mv "$tmp" "$LOG"
-        log "Log rotiert (war ${size} Bytes, auf 50 KB gekürzt)"
+    local lines; lines=$(wc -l < "$LOG" 2>/dev/null) || return
+    if [ "$lines" -gt 1000 ]; then
+        tail -n 500 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
+        log "Log rotiert (war ${lines} Zeilen, auf 500 gekürzt)"
     fi
 }
 
-# ── SIGHUP Handler — Config Hot Reload ───────────────────────────────────────
-# k6a-daemon sendet SIGHUP wenn settings.conf sich ändert (inotify).
-# Setzt RELOAD_FLAG — wird im Haupt-Loop ausgewertet um Race Conditions
-# zu vermeiden (kein direkter sysfs-Write aus dem Signal-Handler).
 RELOAD_FLAG=0
 trap 'RELOAD_FLAG=1' HUP
-
-# ── DEBUG Flag laden ──────────────────────────────────────────────────────────
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# THERMAL MANAGER — LickT approach
-#
-# What LickT taught us:
-#   - Stop/kill thermal services (vendor.thermal-engine, mi_thermald, etc.)
-#   - thermalservice override-status 0
-#   - Set thermal zone mode="disabled" on perf zones only
-#   - SIGSTOP on thermal daemon PIDs (not SIGKILL — they restart)
-#   - NEVER touch conn_therm/charger/battery — hardware interrupt at 95°C
-#     causes touchscreen freeze on SM7150
-#   - Do NOT touch CPU frequencies from here
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Zones that must NEVER be touched — SM7150 hardware safety
-THERMAL_SAFE_PATTERN="touch|tsp|ts[0-9]|conn_therm|charger_therm|battery|bms|qcom-bms|quiet_therm|xo_therm|pa_therm|pm6150|pm6150l"
-
-# Stop thermal daemons — LickT style (SIGSTOP not SIGKILL)
-thermal_stop_daemons() {
-    local pid svc
-    # Stop via init service (survives reboot, won't restart while stopped)
-    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald; do
-        stop "$svc" 2>/dev/null || true
-    done
-    # SIGSTOP any remaining thermal process (LickT approach)
-    for pid in $(pgrep -f "thermal" 2>/dev/null); do
-        kill -SIGSTOP "$pid" 2>/dev/null || true
-    done
-    # thermalservice override: 0 = disable all throttling decisions from Java layer
-    cmd thermalservice override-status 0 2>/dev/null || true
-    log "Thermal daemons: stopped (SIGSTOP)"
+# ══ THERMAL MANAGER ═══════════════════════════════════════════════════════════
+thermal_full_disable() {
+    thermal_stop_daemons
+    thermal_trips_raise
+    log "Thermal zones: trip-points raised to 95°C (zone24/25/BCL geschützt)"
 }
 
-# Restore thermal daemons
-thermal_restore_daemons() {
-    local pid
-    for pid in $(pgrep -f "thermal" 2>/dev/null); do
-        kill -SIGCONT "$pid" 2>/dev/null || true
-    done
-    for svc in vendor.thermal-engine mi_thermald thermal-engine thermald; do
-        start "$svc" 2>/dev/null || true
-    done
-    cmd thermalservice reset 2>/dev/null || true
-    log "Thermal daemons: restored"
-}
-
-# Disable CPU/GPU thermal zones — leave hardware safety zones enabled
-thermal_zones_disable() {
-    local zone type
-    for zone in /sys/devices/virtual/thermal/thermal_zone*; do
-        type=$(cat "$zone/type" 2>/dev/null) || continue
-        [ -z "$type" ] && continue
-        # Skip safety zones — never touch these
-        echo "$type" | grep -qiE "$THERMAL_SAFE_PATTERN" && continue
-        # Only disable performance zones
-        echo "$type" | grep -qiE "cpu|gpu|aoss|ddr|npu|video|cpuss|gpuss" || continue
-        w "$zone/mode"       "disabled"
-        w "$zone/thm_enable" "0"
-    done
-    log "Thermal zones: CPU/GPU disabled (safety zones active)"
-}
-
-# Re-enable all thermal zones
-thermal_zones_restore() {
-    local zone
-    for zone in /sys/devices/virtual/thermal/thermal_zone*; do
-        w "$zone/mode"       "enabled"
-        w "$zone/thm_enable" "1"
-    done
+thermal_full_restore() {
+    thermal_trips_restore
+    thermal_restore_daemons
     log "Thermal zones: restored"
 }
 
-# Full thermal disable (thermal_disable=1 in settings)
-thermal_full_disable() {
-    thermal_stop_daemons
-    thermal_zones_disable
-    THERMAL_WAS_DISABLED=1
+_cache_fallback_zone() {
+    [ -f "/sys/devices/virtual/thermal/thermal_zone0/temp" ] && \
+        TZ_FALLBACK="/sys/devices/virtual/thermal/thermal_zone0/temp"
 }
 
-# Full thermal restore — NUR wenn WIR es deaktiviert haben
-# Ohne diesen Guard reaktiviert das Modul vendor.thermal-engine
-# aggressiver als der ROM-Default → mehr Throttling als ohne Modul!
-thermal_full_restore() {
-    [ "$THERMAL_WAS_DISABLED" = "1" ] || return 0
-    thermal_zones_restore
-    thermal_restore_daemons
-    THERMAL_WAS_DISABLED=0
-    log "Thermal: restored (war disabled)"
-}
-
-# Read highest CPU temperature in °C
 thermal_cpu_temp() {
-    local zone type temp best=0
-    for zone in /sys/devices/virtual/thermal/thermal_zone*; do
-        type=$(cat "$zone/type" 2>/dev/null) || continue
-        echo "$type" | grep -qiE "^cpu[0-9]|^cpuss" || continue
-        temp=$(cat "$zone/temp" 2>/dev/null || echo 0)
-        [ "${temp:-0}" -gt "$best" ] && best="$temp"
-    done
-    printf '%d' $(( best / 1000 ))
+    local t
+    t=$(cat "$TZ_GOLD" 2>/dev/null)
+    { [ -n "$t" ] && [ "$t" -gt -27400 ] 2>/dev/null; } && { echo $(( t / 1000 )); return; }
+    t=$(cat "$TZ_SILVER" 2>/dev/null)
+    { [ -n "$t" ] && [ "$t" -gt -27400 ] 2>/dev/null; } && { echo $(( t / 1000 )); return; }
+    [ -n "$TZ_FALLBACK" ] && { t=$(cat "$TZ_FALLBACK" 2>/dev/null); [ -n "$t" ] && echo $(( t / 1000 )) && return; }
+    echo 50
 }
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# GPU DRIVER — Laufzeit-Check + resetprop
-# Ersetzt den boot-time prop aus system.prop.
-# Setzt ro.gfx.driver.1 nur wenn die APK wirklich installiert ist.
-# Auf Lunaris AOSP standard, aber korrektes Verhalten für andere ROMs.
-# ═══════════════════════════════════════════════════════════════════════════════
-GPU_DRIVER_PKG="com.qualcomm.qti.gpudrivers.sm7150.api30"
-
-apply_gpu_driver() {
-    local installed
-    installed=$(pm list packages 2>/dev/null | grep -c "^package:${GPU_DRIVER_PKG}$")
-    if [ "${installed:-0}" -gt 0 ]; then
-        resetprop ro.gfx.driver.1 "$GPU_DRIVER_PKG" 2>/dev/null || true
-        log "GPU Driver APK gefunden → ro.gfx.driver.1 gesetzt"
-        dbg "GPU driver: $GPU_DRIVER_PKG"
-    else
-        log "GPU Driver APK nicht installiert → ro.gfx.driver.1 nicht gesetzt"
-    fi
-}
-# Key insight from Encore/LickT: set frequencies ONCE on state transition.
-# Do NOT re-write them in the polling loop. Let schedutil govern.
-# ═══════════════════════════════════════════════════════════════════════════════
-cpu_set() {
-    # $1=gov $2=silver_min $3=silver_max $4=gold_min $5=gold_max
-    local gov="$1" smin="$2" smax="$3" gmin="$4" gmax="$5" c
-    for c in 0 1 2 3 4 5; do
-        w /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_governor  "$gov"
-        w /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_min_freq  "$smin"
-        w /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_max_freq  "$smax"
-    done
-    for c in 6 7; do
-        w /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_governor  "$gov"
-        w /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_min_freq  "$gmin"
-        w /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_max_freq  "$gmax"
-    done
-}
-
-# Schedutil policy tunables
-# $1=sil_hispeed_load $2=sil_hispeed_freq $3=sil_up_us $4=sil_down_us
-# $5=gold_hispeed_load $6=gold_hispeed_freq $7=gold_up_us $8=gold_down_us
-schedutil_set() {
-    if [ -d "$SU_SIL" ]; then
-        w "$SU_SIL/hispeed_load"       "$1"
-        w "$SU_SIL/hispeed_freq"       "$2"
-        w "$SU_SIL/up_rate_limit_us"   "$3"
-        w "$SU_SIL/down_rate_limit_us" "$4"
-    fi
-    if [ -d "$SU_GOLD" ]; then
-        w "$SU_GOLD/hispeed_load"       "$5"
-        w "$SU_GOLD/hispeed_freq"       "$6"
-        w "$SU_GOLD/up_rate_limit_us"   "$7"
-        w "$SU_GOLD/down_rate_limit_us" "$8"
-    fi
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# GPU CONTROLLER — Adreno 618
-# pwrlevels: 0=700 1=596 2=490 3=414 4=342 5=257 MHz
-# ═══════════════════════════════════════════════════════════════════════════════
-gpu_gaming() {
-    w $GPU/devfreq/governor         "msm-adreno-tz"
-    w $GPU/force_clk_on             "1"
-    w $GPU/force_bus_on             "1"   2>/dev/null || true
-    w $GPU/bus_split                "0"
-    w $GPU/max_pwrlevel             "0"   # 700 MHz
-    w $GPU/min_pwrlevel             "2"   # 490 MHz floor
-    # devfreq/min_freq: Node fehlt auf manchen Kernels — nur schreiben wenn vorhanden
-    [ -f "$GPU/devfreq/min_freq"        ] && w $GPU/devfreq/min_freq "490000000"
-    [ -f "$GPU/devfreq/max_freq"        ] && w $GPU/devfreq/max_freq "800000000"  # true max on this kernel
-    [ -f "$GPU/devfreq/polling_interval"] && w $GPU/devfreq/polling_interval "5"
-    w $GPU/thermal_pwrlevel         "0"
-    echo "0" > "$GPU/throttling"    2>/dev/null || true
-    # Log für Diagnose: zeigt welche Nodes wirklich gesetzt wurden
-    log "GPU: gov=$(cat $GPU/devfreq/governor 2>/dev/null|head -c20) clk=$(cat $GPU/force_clk_on 2>/dev/null) min_freq=$(cat $GPU/devfreq/min_freq 2>/dev/null) pwrlvl=$(cat $GPU/min_pwrlevel 2>/dev/null) pwrl_max=$(cat $GPU/max_pwrlevel 2>/dev/null)"
-}
-
-gpu_balanced() {
-    w $GPU/devfreq/governor        "msm-adreno-tz"
-    w $GPU/force_clk_on            "0"
-    w $GPU/force_bus_on            "0" 2>/dev/null || true
-    w $GPU/bus_split               "1"
-    w $GPU/max_pwrlevel            "0"
-    w $GPU/min_pwrlevel            "5"   # 257 MHz floor
-    w $GPU/thermal_pwrlevel        "1"
-    # adreno_idler_active: not present on this kernel
-    echo "1" > "$GPU/throttling" 2>/dev/null || true
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# IRQ AFFINITY — vierstufig, als eigene Funktion für periodische Auffrischung
-#
-# Problem auf sweet_k6a: Kernel setzt IRQ-Affinität nach suspend/resume zurück.
-# Lösung: apply_irq_affinity() wird bei State-Eintritt UND periodisch aufgerufen.
-#
-# Routing-Strategie:
-#   Touch (goodix_ts) → Gold (0xc0): Touch-ISR direkt nah am InputDispatcher
-#   GPU  (kgsl-3d0)  → Gold (0xc0): GPU-Completion-ISR nah am RenderThread
-#   UFS  (ufshc)     → Silver (0x3f): Storage-Interrupts stören Gold nicht
-#   Net  (wlan/rmnet)→ Silver (0xfc): Paket-ISR von Gold fernhalten
-# ═══════════════════════════════════════════════════════════════════════════════
-apply_irq_affinity() {
-    # irqbalance: stop als init service + SIGKILL für sofortige Wirkung
-    stop irqbalance 2>/dev/null || true
-    for _ib in $(pgrep irqbalance 2>/dev/null); do
-        kill -9 "$_ib" 2>/dev/null || true
-    done
-
-    local irq_dir irq_name
-    for irq_dir in /proc/irq/*/; do
-        [ -f "${irq_dir}actions" ] || continue
-        irq_name=$(cat "${irq_dir}actions" 2>/dev/null)
-        [ -z "$irq_name" ] && continue
-
-        # Touch → Gold (0xc0 = cpu6+7): minimale Input-Latenz
-        # goodix_ts, synaptics, focal, atmel, gt9xx, fts_touch
-        if echo "$irq_name" | grep -qiE "goodix|synaptics|fts_touch|gt9|focal|atmel|touch_irq|touchscreen"; then
-            printf '%s' "c0" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ Touch→Gold: $irq_name"
-
-        # GPU Completion → Gold (0xc0): ISR landet auf RenderThread-Cluster
-        elif echo "$irq_name" | grep -qiE "kgsl|kgsl3d|adreno"; then
-            printf '%s' "c0" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ GPU→Gold: $irq_name"
-
-        # UFS/Storage → Silver (0x3f = cpu0-5): Asset-Streaming auf Silver, Gold frei
-        elif echo "$irq_name" | grep -qiE "ufshc|ufs|mmc|sdhci|msdc"; then
-            printf '%s' "3f" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ UFS→Silver: $irq_name"
-
-        # Netzwerk → Silver (0xfc = cpu1-7 ohne cpu0): WLAN/rmnet/IPA von Gold
-        elif echo "$irq_name" | grep -qiE "wlan|rmnet|ipa|smd|gsi|qcom-net"; then
-            printf '%s' "fc" > "${irq_dir}smp_affinity" 2>/dev/null || true
-            dbg "IRQ Net→Silver: $irq_name"
-        fi
-    done
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SCHEDULER — Openela 4.14 WALT + schedtune
-# schedtune only — uclamp does not exist on 4.14 CAF
-# ═══════════════════════════════════════════════════════════════════════════════
-sched_gaming() {
-    # schedtune: boost=10 + prefer_idle=1 → Tasks aggressiv auf Gold-Kerne
-    # boost=10 (statt 1): stärkerer Hint, Tasks bevorzugt auf leistungsstarke Cores
-    # prefer_idle=1: wartet auf idle Gold statt sofort auf Silver zu laufen
-    # Kombination = Äquivalent zu uclamp.min=80 auf neueren Kernels
-    w /dev/stune/top-app/schedtune.boost        "10"
-    w /dev/stune/top-app/schedtune.prefer_idle  "1"
-    w /dev/stune/foreground/schedtune.boost     "10"
-    w /dev/stune/background/schedtune.boost     "-10" 2>/dev/null || true
-    # cpuset: top-app + foreground on all cores (Gold available for CoD)
-    echo "0-7" > /dev/cpuset/top-app/cpus               2>/dev/null || true
-    echo "0-7" > /dev/cpuset/foreground/cpus             2>/dev/null || true
-    # system-background on Silver only: frees Gold for CoD render threads
-    echo "0-5" > /dev/cpuset/system-background/cpus      2>/dev/null || true
-    # background also Silver only: prevents background apps stealing Gold
-    echo "0-5" > /dev/cpuset/background/cpus             2>/dev/null || true
-    # restricted: Silver mid-range only
-    echo "2-5" > /dev/cpuset/restricted/cpus             2>/dev/null || true
-    # WALT — aggressive load window: reacts faster to CoD burst loads
-    w /proc/sys/kernel/sched_window_stats_policy  "2"
-    w /proc/sys/kernel/sched_ravg_hist_size        "3"
-    w /proc/sys/kernel/sched_account_wait_time     "1"
-    # Fast frequency change notification: 256 pages (~1MB) threshold
-    w /proc/sys/kernel/sched_freq_inc_notify       "256"
-    w /proc/sys/kernel/sched_freq_dec_notify       "256"
-    # Migration cost: Tasks bleiben 5ms auf ihrem Core bevor Migration erlaubt
-    # Verhindert Core-Hopping des RenderThread zwischen cpu6 und cpu7
-    # Default ~500000ns. Auf WALT-Kernels oft nicht vorhanden → w() ignoriert es
-    w /proc/sys/kernel/sched_migration_cost_ns     "5000000"
-    # Micro-stutter: Gold down_rate hold 20ms (prevent bounce after frame burst)
-    # tune_schedutil already sets 800µs but override for gaming stability
-    [ -d "$SU_GOLD" ] && w "$SU_GOLD/down_rate_limit_us" "20000"
-    # CPU input boost (SM7150 CAF) — touch → brief Silver+Gold freq boost
-    local IB=/sys/module/cpu_boost/parameters
-    if [ -d "$IB" ]; then
-        w "$IB/input_boost_enabled" "1"
-        printf '%s' "0:1248000 1:1248000 2:1248000 3:1248000 4:1248000 5:1248000 6:1785600 7:1785600" \
-            > "$IB/input_boost_freq" 2>/dev/null || true
-        w "$IB/input_boost_ms" "40"
-    fi
-    # msm_performance: DEAKTIVIERT — kollidiert mit scaling_min/max_freq
-    # Diagnose zeigte cpu0@1017MHz / cpu6@1094MHz (FROZEN) durch falsches Format.
-    # cpu_set() setzt scaling_min/max_freq korrekt — kein zweiter Override nötig.
-    # Falls msm_performance existiert: Werte auf -1 (= kein Override) setzen
-    local MP=/sys/module/msm_performance/parameters
-    if [ -d "$MP" ]; then
-        printf '%s' "0:-1 1:-1 2:-1 3:-1 4:-1 5:-1 6:-1 7:-1"             > "$MP/cpu_max_freq" 2>/dev/null || true
-        printf '%s' "0:-1 1:-1 2:-1 3:-1 4:-1 5:-1 6:-1 7:-1"             > "$MP/cpu_min_freq" 2>/dev/null || true
-        dbg "msm_performance: cleared (set to -1 = no override)"
-    fi
-    # IRQ Affinity — vierstufig via apply_irq_affinity() (Touch/GPU→Gold, UFS/Net→Silver)
-    # Kernel entropy: disable add_random for I/O (saves overhead during gaming)
-    for q in /sys/block/*/queue/add_random; do w "$q" "0"; done
-    apply_irq_affinity
-    log "Sched: WALT+schedtune+IRQ(Touch/GPU→Gold,UFS→3f,Net→fc)+msm_perf"
-}
-
-sched_balanced() {
-    w /dev/stune/top-app/schedtune.boost        "0"
-    w /dev/stune/top-app/schedtune.prefer_idle  "0"
-    w /dev/stune/foreground/schedtune.boost     "0"
-    echo "0-7" > /dev/cpuset/top-app/cpus       2>/dev/null || true
-}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ZRAM — 4.14 CAF: lz4/lzo only (zstd needs kernel ≥5.1)
-# ═══════════════════════════════════════════════════════════════════════════════
-zram_gaming() {
-    local swap_free swap_total dirty z
-    swap_free=$(grep SwapFree  /proc/meminfo | awk '{print $2}')
-    swap_total=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
-    dirty=$(( swap_total - swap_free ))
-    for z in /sys/block/zram*/comp_algorithm; do
-        [ -f "$z" ] || continue
-        # Only switch if ZRAM not dirty — prevents brief freeze
-        [ "${dirty:-0}" -lt 10240 ] && echo "lz4" > "$z" 2>/dev/null || true
-    done
-    w /proc/sys/vm/page-cluster       "0"   # no swap read-ahead on ZRAM
-    w /proc/sys/vm/vfs_cache_pressure "50"  # hold inode/dentry cache longer
-}
-
-zram_balanced() {
-    w /proc/sys/vm/page-cluster       "0"
-    w /proc/sys/vm/vfs_cache_pressure "100"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LMK — sweet2 8GB RAM, kernel 4.14 LMKD
-# ═══════════════════════════════════════════════════════════════════════════════
-lmk_gaming() {
-    # Protect CoD audio/network background threads (thresh 1-3)
-    # Kill empty apps aggressively (thresh 5-6)
-    # LMK gaming: higher thresholds protect CoD audio/net threads
-    echo "6144,8192,10240,14336,18432,24576" > /sys/module/lowmemorykiller/parameters/minfree 2>/dev/null || true
-    echo "0,100,200,300,900,906"             > /sys/module/lowmemorykiller/parameters/adj     2>/dev/null || true
-}
-
-lmk_balanced() {
-    echo "4096,5120,6144,7168,8192,9216"         > /sys/module/lowmemorykiller/parameters/minfree 2>/dev/null || true
-    echo "0,100,200,300,900,906"         > /sys/module/lowmemorykiller/parameters/adj     2>/dev/null || true
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# NETWORK — LTE optimised for CoD Mobile DTLS/UDP game traffic
-# ═══════════════════════════════════════════════════════════════════════════════
-net_gaming() {
-    # BBR: better throughput on lossy LTE vs cubic
-    sysctl -w net.ipv4.tcp_congestion_control=bbr       2>/dev/null || true
-    # Socket buffers: handle LTE burst (explosion + many players)
-    sysctl -w net.core.rmem_max=16777216                2>/dev/null || true
-    sysctl -w net.core.wmem_max=16777216                2>/dev/null || true
-    sysctl -w net.ipv4.tcp_rmem="4096 524288 16777216"  2>/dev/null || true
-    sysctl -w net.ipv4.tcp_wmem="4096 524288 16777216"  2>/dev/null || true
-    # UDP buffers: CoD game traffic is DTLS/UDP
-    sysctl -w net.ipv4.udp_rmem_min=32768               2>/dev/null || true
-    sysctl -w net.ipv4.udp_wmem_min=32768               2>/dev/null || true
-    # Packet backlog: don't drop during burst
-    sysctl -w net.core.netdev_max_backlog=20000         2>/dev/null || true
-    # LTE PAWS needs timestamps; SACK reduces retransmits on loss
-    sysctl -w net.ipv4.tcp_timestamps=1                 2>/dev/null || true
-    sysctl -w net.ipv4.tcp_sack=1                       2>/dev/null || true
-    sysctl -w net.ipv4.tcp_dsack=1                      2>/dev/null || true
-    # Fast retransmit on LTE drops (default 15 is too slow)
-    sysctl -w net.ipv4.tcp_retries2=5                   2>/dev/null || true
-    sysctl -w net.ipv4.tcp_syn_retries=3                2>/dev/null || true
-    # FastOpen: reduce handshake latency on reconnect
-    sysctl -w net.ipv4.tcp_fastopen=3                   2>/dev/null || true
-    # Precise ping measurement
-    sysctl -w net.ipv4.icmp_ratelimit=0                 2>/dev/null || true
-}
-
-net_restore() {
-    sysctl -w net.core.netdev_max_backlog=1000          2>/dev/null || true
-    sysctl -w net.ipv4.tcp_retries2=15                  2>/dev/null || true
-    sysctl -w net.ipv4.icmp_ratelimit=1000              2>/dev/null || true
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# I/O
-# ═══════════════════════════════════════════════════════════════════════════════
-io_gaming() {
-    local q
-    for q in /sys/block/*/queue/scheduler; do
-        printf '%s' "mq-deadline" > "$q" 2>/dev/null || \
-        printf '%s' "deadline"    > "$q" 2>/dev/null || true
-    done
-    for q in /sys/block/*/queue/add_random; do w "$q" "0"; done
-    w /sys/block/mmcblk0/queue/read_ahead_kb "512"   # CoD map loading
-    w /sys/block/mmcblk0/queue/nr_requests   "128"  # more I/O parallelism
-    w /sys/block/mmcblk0/queue/rq_affinity   "2"    # full affinity for eMMC
-}
-
-io_balanced() {
-    local q
-    for q in /sys/block/*/queue/scheduler; do
-        printf '%s' "cfq" > "$q" 2>/dev/null || \
-        printf '%s' "bfq" > "$q" 2>/dev/null || true
-    done
-    w /sys/block/mmcblk0/queue/read_ahead_kb "512"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# BATTERY SPOOF
-# ═══════════════════════════════════════════════════════════════════════════════
-spoof_battery() {
-    [ "$(cfg battery_spoof_enable)" = "1" ] || return 0
-    local c raw
-    c=$(cfg battery_spoof_temp); c=${c:-1}
-    raw=$(( c * 10 ))
-    for node in /sys/class/power_supply/battery/temp \
-                /sys/class/power_supply/bms/temp; do
-        [ -f "$node" ] && printf '%s\n' "$raw" > "$node" 2>/dev/null
-    done
-    cmd thermalservice override-status 0 2>/dev/null || true
-    log "Battery spoof: ${c}°C (raw ${raw})"
-}
-
-restore_battery_spoof() {
-    cmd thermalservice reset 2>/dev/null || true
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# THREAD PINNING — Per-Game taskset
-#
-# Pinnt CoDs RenderThread + UnityMain auf Gold-Kerne (cpu6-7, Bitmask 0xc0).
-# Verhindert dass der Scheduler den Render-Thread auf Silver legt wenn Gold
-# kurz beschäftigt ist — eine Hauptquelle von Micro-Stutters auf SM7150.
-# Wird bei jedem GAMING-Tick aufgefrischt (neue Threads können spawnen).
-# ═══════════════════════════════════════════════════════════════════════════════
-CODM_PKG="com.activision.callofduty.shooter"
-
-tune_codm() {
-    [ "$(cfg thread_pin_enable)" = "0" ] && return 0
-
-    # CoD PID: pidof zuerst (schnell), dann cgroup-Fallback
-    local main_pid
-    main_pid=$(pidof "$CODM_PKG" 2>/dev/null | awk '{print $1}')
-    if [ -z "$main_pid" ]; then
-        main_pid=$(cat /sys/fs/cgroup/top-app/cgroup.procs 2>/dev/null | while read -r p; do
-            [ -f "/proc/$p/cmdline" ] || continue
-            cmd=$(tr -d '\0' < "/proc/$p/cmdline" 2>/dev/null)
-            echo "$cmd" | grep -q "^${CODM_PKG}" && echo "$p" && break
-        done)
-    fi
-    [ -z "$main_pid" ] && return 0
-
-    dbg "tune_codm: CoD PID=$main_pid"
-
-    local tid thread_name
-    for tid in /proc/"$main_pid"/task/*/; do
-        tid="${tid%/}"; tid="${tid##*/}"
-        [ -f "/proc/$main_pid/task/$tid/comm" ] || continue
-        thread_name=$(cat "/proc/$main_pid/task/$tid/comm" 2>/dev/null)
-        case "$thread_name" in
-            *RenderThread*|*UnityMain*|*GLThread*|*mali*render*)
-                # 0xc0 = cpu6 + cpu7 (Gold-Kerne) — kein Silver-Fallback
-                taskset -p 0xc0 "$tid" >/dev/null 2>&1
-                dbg "Pinned $thread_name (tid $tid) → Gold (0xc0)"
-                ;;
-            *UnityGfx*|*Worker*Thread*|*JobWorker*)
-                # Worker auf alle Kerne — kein Engpass durch Pinning
-                taskset -p 0xff "$tid" >/dev/null 2>&1
-                dbg "Worker $thread_name (tid $tid) → alle Kerne (0xff)"
-                ;;
-            *AudioMixer*|*AudioTrack*|*AudioFlinger*)
-                # Audio auf Silver — unterbricht Gold-RenderThread nicht
-                taskset -p 0x3f "$tid" >/dev/null 2>&1  # 0x3f = cpu0-5
-                dbg "Audio $thread_name (tid $tid) → Silver (0x3f)"
-                ;;
-        esac
-    done
-
-    # AudioFlinger-Prozess selbst auf Silver pinnen
-    local af_pid
-    af_pid=$(pidof audioserver 2>/dev/null | awk '{print $1}')
-    [ -n "$af_pid" ] && taskset -p 0x3f "$af_pid" >/dev/null 2>&1 &&         dbg "audioserver PID=$af_pid → Silver (0x3f)"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# THERMAL PREDICTION — preemptiv statt reaktiv
-#
-# Misst Temperatur-Steigerungsrate (°C/Tick, Tick=3s).
-# Bei +3°C/Tick UND >75°C: Gold-Max auf 1785600 kappen — BEVOR der volle
-# THERMAL_LIMIT bei 84°C greift. Verhindert abrupte Throttle-Sprünge.
-# Bei Abkühlung unter 75°C: Cap automatisch aufgehoben.
-# ═══════════════════════════════════════════════════════════════════════════════
-THERMAL_PREDICT_TEMP=75      # °C — Vorhersage-Schwelle
-THERMAL_PREDICT_RATE=3       # °C/Tick — Steigerungsrate-Schwelle
-GOLD_MAX_NORMAL="2208000"
-GOLD_MAX_CAP="1785600"
-THERMAL_CAPPED=0
-PREV_TEMP=-1   # -1 = nicht initialisiert — verhindert falschen Rate-Spike beim ersten Tick
 
 thermal_predict_check() {
-    # Nur im GAMING State relevant — COMPETITIVE läuft immer ohne Prediction
-    # Thermal Prediction würde im Ranked genau bei Burst-Last cappem — falsch
-    [ "$STATE" = "GAMING" ] || return 0
-    [ "$(cfg thermal_prediction_enable)" = "0" ] && return 0
-
-    local curr_temp rate
-    curr_temp=$(thermal_cpu_temp)
-
-    # Ersten Tick überspringen — PREV_TEMP=-1 bedeutet keine Baseline vorhanden
-    # Verhindert falschen Rate-Spike (curr_temp - 0 = ganzer Temp-Wert)
-    if [ "$PREV_TEMP" = "-1" ]; then
-        PREV_TEMP=$curr_temp
-        return 0
-    fi
-
-    rate=$(( curr_temp - PREV_TEMP ))
-    PREV_TEMP=$curr_temp
-
-    dbg "thermal_predict: temp=${curr_temp}°C rate=${rate}°C/tick capped=${THERMAL_CAPPED}"
-
-    # Preemptiver Cap: heiß UND schnell steigend
-    if [ "$THERMAL_CAPPED" = "0" ] \
-       && [ "$curr_temp" -ge "$THERMAL_PREDICT_TEMP" ] \
-       && [ "$rate" -ge "$THERMAL_PREDICT_RATE" ]; then
-        w /sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq "$GOLD_MAX_CAP"
-        THERMAL_CAPPED=1
-        log "THERMAL_PREDICT: ${curr_temp}°C +${rate}°C/tick → Gold gecapped auf ${GOLD_MAX_CAP}Hz"
-
-    # Cap aufheben wenn es kühler wird
-    elif [ "$THERMAL_CAPPED" = "1" ] && [ "$curr_temp" -lt "$THERMAL_PREDICT_TEMP" ]; then
-        w /sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq "$GOLD_MAX_NORMAL"
-        THERMAL_CAPPED=0
-        log "THERMAL_PREDICT aufgehoben: ${curr_temp}°C < ${THERMAL_PREDICT_TEMP}°C → Gold normal"
+    [ "$STATE" = "COOKING" ] || return 0
+    local curr rate predict_thresh
+    curr=$(thermal_cpu_temp)
+    predict_thresh=$THERMAL_PREDICT_TEMP
+    [ "$PREV_TEMP" = "-1" ] && { PREV_TEMP=$curr; return 0; }
+    rate=$(( curr - PREV_TEMP )); PREV_TEMP=$curr
+    if [ "$THERMAL_CAPPED" = "0" ] && [ "$curr" -ge "$predict_thresh" ] && [ "$rate" -ge "$THERMAL_PREDICT_RATE" ]; then
+        w "$P6/scaling_max_freq" "$GOLD_MAX_CAP"; THERMAL_CAPPED=1
+        warn "THERMAL_PREDICT: ${curr}°C +${rate}/tick → Gold cap ${GOLD_MAX_CAP}Hz"
+    elif [ "$THERMAL_CAPPED" = "1" ] && [ "$curr" -lt "$_THERMAL_PREDICT_RECOVER" ]; then
+        w "$P6/scaling_max_freq" "$GOLD_MAX_NORMAL"; THERMAL_CAPPED=0
+        log "THERMAL_PREDICT aufgehoben: ${curr}°C"
     fi
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STATE TRANSITIONS
-# Encore principle: entering a state sets EVERYTHING for that state.
-# Nothing is assumed from prior state.
-# ═══════════════════════════════════════════════════════════════════════════════
+# ══ DATA.TXT ═══════════════════════════════════════════════════════════════════
+write_data() {
+    local temp cpu_s cpu_g gpu_mhz gpu_busy
+    local btp btp_c bpc bat_str
+    local kv kv_real uptime_str
+    local ram_used ram_total cache_kb last_clean
+    local pause_val freeze_str
 
-enter_balanced() {
-    log "→ BALANCED"
-    # CPU: minimal floor, full headroom, let schedutil decide
-    # Silver cpu0-5: min=300 max=1804800
-    # Gold   cpu6-7: min=300 max=2208000
-    cpu_set "schedutil" "300000" "1804800" "300000" "2208000"
-    # schedutil: conservative — hispeed at 80% load, standard rates
-    schedutil_set "80" "1248000" "4000" "16000" \
-                  "75" "1574400" "2000" "8000"
-    gpu_balanced
-    io_balanced
-    sched_balanced
-    w /proc/sys/vm/swappiness              "15"
-    w /proc/sys/vm/dirty_expire_centisecs  "3000"
-    w /proc/sys/vm/dirty_writeback_centisecs "500"
-    zram_balanced
-    lmk_balanced
-    w /proc/sys/kernel/sched_boost         "0"
-    w /proc/sys/kernel/sched_migration_cost_ns "500000"  # default restore
-    thermal_full_restore
-    restore_battery_spoof
-    # Bypass: restore default 41°C threshold
-    resetprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || \
-        setprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || true
-    net_restore
-    cmd power set-fixed-performance-mode-enabled false 2>/dev/null || true
+    temp=$(thermal_cpu_temp)
+    _TEMP_HIST="${temp},${_TEMP_HIST}"; _TEMP_HIST="${_TEMP_HIST:0:79}"
+    cpu_s=$(( $(cat "$P0/scaling_cur_freq" 2>/dev/null || echo 0) / 1000 ))
+    cpu_g=$(( $(cat "$P6/scaling_cur_freq" 2>/dev/null || echo 0) / 1000 ))
+    gpu_mhz=$(( $(cat $GPU/devfreq/cur_freq 2>/dev/null || echo 0) / 1000000 ))
+    gpu_busy=$(cat $GPU/gpu_busy_percentage 2>/dev/null || echo "0")
+
+    btp=$(cat /sys/class/power_supply/battery/temp 2>/dev/null || echo 0)
+    btp_c="$(( ${btp:-0} / 10 )).$(( ${btp:-0} % 10 ))"
+    bpc=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 0)
+    local bst
+    bst=$(cat /sys/class/power_supply/battery/status 2>/dev/null || echo "Unknown")
+    bat_str="${bpc}% - ${bst}"
+
+    kv=$(uname -r 2>/dev/null || echo "unknown")
+    kv_real=$(getprop ro.build.version.kernel 2>/dev/null || echo "")
+    local android_ver
+    android_ver=$(getprop ro.build.version.release 2>/dev/null || echo "\u2014")
+
+    uptime_str=$(uptime 2>/dev/null | sed 's/.*up //' | sed 's/,.*//' | xargs 2>/dev/null || echo "")
+
+    ram_total=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+    local ram_free
+    ram_free=$(grep MemAvailable /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+    ram_used=$(( ram_total - ram_free ))
+    local ram_used_gb ram_total_gb
+    ram_used_gb="$(( ${ram_used:-0} / 1048576 )).$(( (${ram_used:-0} % 1048576) * 100 / 1048576 ))"
+    ram_total_gb="$(( ${ram_total:-0} / 1048576 )).$(( (${ram_total:-0} % 1048576) * 100 / 1048576 ))"
+
+    cache_kb=$(grep "^Cached:" /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+    local cache_gb
+    cache_gb="$(( ${cache_kb:-0} / 1048576 )).$(( (${cache_kb:-0} % 1048576) * 100 / 1048576 ))"
+
+    last_clean=""
+    [ -f "$CACHE_LAST" ] && last_clean=$(cat "$CACHE_LAST" 2>/dev/null | head -1 | cut -c1-19 || echo "")
+
+    pause_val="0"; [ -f "$PAUSE_FILE" ] && pause_val="1"
+
+    freeze_str=""
+    [ -f "$FREEZE" ] && freeze_str=$(grep -v "^#" "$FREEZE" 2>/dev/null | grep -v "^$" | tr '\n' '|' | sed 's/|$//' || echo "")
+
+    local gpu_driver_desc=""
+    [ -f /data/adb/modules/adreno_gpu_driver/module.prop ] && gpu_driver_desc=$(grep "^description=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2- | head -1)
+    [ -z "$gpu_driver_desc" ] && gpu_driver_desc="\u2014"
+    local c_cpu_hotplug=${CFG_CPU_HOTPLUG:-0}
+    local _ping_val _ping_stale
+
+    _ping_val="\u2014"; _ping_stale="1"
+    [ -f "${DATA}.ping" ] && _ping_val=$(cat "${DATA}.ping" 2>/dev/null) && _ping_stale="0"
+
+    cat > "${DATA}.tmp" << EOF
+pid=$$
+state=$STATE
+profile=$(cat "$PROFILE" 2>/dev/null || echo "daily")
+manual_profile=$MANUAL
+temp=${temp}
+cpu_sil_mhz=${cpu_s}
+cpu_gold_mhz=${cpu_g}
+gpu_mhz=${gpu_mhz}
+gpu_busy=${gpu_busy}
+gpu_driver=${gpu_driver_desc}
+net_type=${NET_TYPE}
+net_qos=${CFG_NET_QOS}
+net_iface=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+bat=${bat_str}
+bat_temp=${btp_c}
+kernel=${kv}
+kernel_real=${kv_real}
+android=${android_ver}
+uptime=${uptime_str}
+ram_used=${ram_used_gb}
+ram_total=${ram_total_gb}
+cache_kb=${cache_gb}
+last_clean=${last_clean}
+pause=${pause_val}
+freeze=${freeze_str}
+temps=${_TEMP_HIST}
+conf_cpu_hotplug=${c_cpu_hotplug}
+ping=${_ping_val}
+ping_stale=${_ping_stale}
+tick=${TICK}
+EOF
+    printf 'log=' >> "${DATA}.tmp"
+    tail -15 "$LOG" 2>/dev/null | tr '\n' '\001' >> "${DATA}.tmp"
+    printf '\n' >> "${DATA}.tmp"
+    mv "${DATA}.tmp" "$DATA"
+}
+
+write_ping() {
+    local p
+    p=$(ping -c 1 -W 1 8.8.8.8 2>/dev/null | grep -o "time=[0-9.]*" | cut -d= -f2)
+    if [ -n "$p" ]; then
+        printf '%s\n' "$p" > "${DATA}.ping"
+    else
+        printf 'timeout\n' > "${DATA}.ping"
+    fi
+}
+
+# ══ STATE TRANSITIONS ═════════════════════════════════════════════════════════
+enter_daily() {
+    _can_enter || return 0
+    log "→ DAILY"; _cfg_load_cache
+    cpu_hotplug_online_all
+    cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
+    cpu_hotplug_offline_gold
+    gpu_daily; io_daily; sched_daily; vm_daily; lmk_default; zram_daily
+    lru_gen_enable; sf_daily; wakelock_block
+    thermal_daily; restore_battery_spoof
+    net_restore; bt_restore
+    resetprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || true
     setprop debug.sf.disable_backpressure   "0" 2>/dev/null || true
     setprop debug.sf.enable_gl_backpressure "1" 2>/dev/null || true
     setprop debug.sf.latch_unsignaled       "0" 2>/dev/null || true
+    setprop persist.sys.game_mode           "0" 2>/dev/null || true
     setprop persist.vendor.qti.games.gt.fps "0" 2>/dev/null || true
-    w /proc/sys/kernel/sched_child_runs_first "0"
-    w /proc/sys/vm/extra_free_kbytes "0"
-    start logd 2>/dev/null || true
-    # irqbalance wieder starten wenn wir balanced sind (kein Gaming)
-    for _ib in $(pgrep -f irqbalance 2>/dev/null); do
-        kill -SIGCONT "$_ib" 2>/dev/null || true
-    done
-    unfreeze_all
-    printf '%s' "balanced" > "$PROFILE"
-    STATE="BALANCED"
-    log "BALANCED: Silver≥300 Gold≥300 | governor free"
+    w /sys/class/power_supply/battery/system_temp_level "0"
+    start logd 2>/dev/null || true; unfreeze_all
+    THERMAL_CAPPED=0; _RIL_PINNED=0
+    printf '%s' "daily" > "$PROFILE"; STATE="DAILY"
+    log "DAILY: Silver 576-1248MHz | Gold offline | GPU 140-267MHz Lock | trips 55°C | WLAN ON"
+    ( sleep 2; cpu_set "schedutil" "576000" "1248000" "652800" "1651200" ) &
 }
 
-enter_gaming() {
-    log "→ GAMING"
-    # ── CPU: set min floors, let schedutil boost above them freely ────────────
-    # up_rate_limit_us=0:   no delay ramping UP   (instant on burst load)
-    # down_rate_limit_us=800: hold high for 800µs (one ~120fps frame window)
-    # hispeed_load=1: go to hispeed_freq at 1% load — effectively always boosted
-    cpu_set "schedutil" "1248000" "1804800" "1785600" "2208000"
-    # Verifizieren nach cpu_set (msm_performance könnte überschreiben)
-    _s_min=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq 2>/dev/null)
-    _g_min=$(cat /sys/devices/system/cpu/cpu6/cpufreq/scaling_min_freq 2>/dev/null)
-    log "CPU verify: Silver_min=${_s_min} Gold_min=${_g_min} (soll: 1248000/1785600)"
-    # Sanity: wenn eingefroren (min=max) → erneut setzen ohne msm_performance
-    [ "${_s_min}" != "1248000" ] && {
-        log "CPU FREEZE DETECTED! Silver_min=${_s_min} → re-applying"
-        for c in 0 1 2 3 4 5; do
-            echo "1248000" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_min_freq 2>/dev/null || true
-            echo "1804800" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_max_freq 2>/dev/null || true
-        done
-    }
-    [ "${_g_min}" != "1785600" ] && {
-        log "CPU FREEZE DETECTED! Gold_min=${_g_min} → re-applying"
-        for c in 6 7; do
-            echo "1785600" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_min_freq 2>/dev/null || true
-            echo "2208000" > /sys/devices/system/cpu/cpu${c}/cpufreq/scaling_max_freq 2>/dev/null || true
-        done
-    }
-    # up_rate=0:    instant ramp on any load spike (no delay)
-    # down_rate Silver=8000µs: hold freq 8ms after burst (audio/net threads)
-    # down_rate Gold=10000µs: hold freq 10ms after frame burst (less bouncing)
-    # Silver down_rate=12ms: etwas länger halten als 8ms
-    # Verhindert Stutter bei Audio-Thread-Spikes (Schüsse, Explosionen)
-    # Gold down_rate=10ms via schedutil_set, dann 20ms override in sched_gaming
-    schedutil_set "1" "1804800" "0" "12000" \
-                  "1" "2208000" "0" "10000"
-    # ── GPU ──────────────────────────────────────────────────────────────────
-    gpu_gaming
-    # ── I/O ──────────────────────────────────────────────────────────────────
-    io_gaming
-    # ── Memory ───────────────────────────────────────────────────────────────
-    w /proc/sys/vm/swappiness              "10"
-    w /proc/sys/vm/dirty_expire_centisecs  "100"
-    w /proc/sys/vm/dirty_writeback_centisecs "50"
-    zram_gaming       # lz4 + page-cluster=0 + vfs_cache_pressure=50
-    lmk_gaming        # protect CoD threads, kill empty apps early
-    w /proc/sys/kernel/sched_boost         "1"
-    # ART GC: shorter but more frequent pauses (no long stop-the-world)
-    setprop dalvik.vm.heaptargetutilization 0.75 2>/dev/null || true
-    setprop dalvik.vm.heapmaxfree           8m   2>/dev/null || true
-    # ── Thermal — Gaming braucht thermal_disable=1
-    # vendor.thermal-engine throttelt Gold auf 1555200Hz bei 63°C — zu aggressiv.
-    # Im Gaming-Modus immer deaktivieren. User kann thermal_disable=0 setzen
-    # um auf eigenes Risiko den Thermal-Engine aktiv zu lassen.
-    if [ "$(cfg thermal_disable)" = "0" ]; then
-        # Explizit deaktiviert: Engine bleibt aktiv (Nutzer-Entscheidung)
-        log "WARNUNG: thermal_disable=0 — Thermal-Engine drosselt CPU/GPU!"
-    else
-        # Default (thermal_disable=1 oder nicht gesetzt): Engine stoppen
-        thermal_full_disable
-    fi
-    # ── Battery spoof ────────────────────────────────────────────────────────
-    spoof_battery
-    # ── Bypass power supply ──────────────────────────────────────────────────
-    resetprop persist.vendor.battery.bypass_temp_thresh "35" 2>/dev/null || \
-        setprop persist.vendor.battery.bypass_temp_thresh "35" 2>/dev/null || true
-    # ── Scheduler extras ─────────────────────────────────────────────────────
-    sched_gaming
-    # ── Network (LTE/CoD optimised) ──────────────────────────────────────────
-    net_gaming
-    # ── SurfaceFlinger ───────────────────────────────────────────────────────
-    setprop debug.sf.disable_backpressure   "1" 2>/dev/null || true
-    setprop debug.sf.enable_gl_backpressure "0" 2>/dev/null || true
-    setprop debug.sf.set_idle_timer_ms      "0" 2>/dev/null || true
-    setprop persist.sys.game_mode           "1" 2>/dev/null || true
-    setprop persist.sys.vulkan.perf_mode    "1" 2>/dev/null || true
-    # latch_unsignaled: SF präsentiert Frame ohne auf GPU-Signal zu warten
-    # Reduziert 1-Frame Wartezeit auf Kosten möglicher Tearing-Artefakte
-    # CoD bei 120Hz: Vorteil überwiegt deutlich
-    setprop debug.sf.latch_unsignaled       "1" 2>/dev/null || true
-    cmd game set --downscale 1.0 com.activision.callofduty.shooter 2>/dev/null || true
-    # Qualcomm Game Tools FPS-Hint
-    setprop persist.vendor.qti.games.gt.fps "120" 2>/dev/null || true
-    stop logd 2>/dev/null || true
-    # ── CoD kernel tweaks ─────────────────────────────────────────────────────
-    # Child-Thread läuft sofort nach fork() — CoD spawnt viele Threads
-    w /proc/sys/kernel/sched_child_runs_first "1"
-    # Mehr freien RAM für burst allocations (CoD lädt Assets ruckartig)
-    # 24576KB = 24MB Reserve unterhalb LMK-Trigger
-    w /proc/sys/vm/extra_free_kbytes "24576"
-    # Thread Pinning: RenderThread+UnityMain → Gold (0xc0), Worker → alle (0xff)
-    tune_codm
-    THERMAL_CAPPED=0
-    printf '%s' "gaming" > "$PROFILE"
-    STATE="GAMING"
-    log "GAMING: Silver≥1248000 Gold≥1785600 | GPU 490-700MHz | thermal=$(cfg thermal_disable)"
-}
-
-
-
-enter_battery() {
-    log "→ BATTERY"
-    cpu_set "powersave" "300000" "1248000" "300000" "1574400"
-    w $GPU/devfreq/governor     "powersave"
-    w $GPU/force_clk_on         "0"
-    w $GPU/force_bus_on         "0" 2>/dev/null || true
-    w $GPU/bus_split             "1"
-    w $GPU/min_pwrlevel          "5"
-    w $GPU/max_pwrlevel          "4"
-    # adreno_idler_active: not present on this kernel
-    io_balanced
-    sched_balanced
-    w /proc/sys/vm/swappiness              "60"
-    w /proc/sys/vm/vfs_cache_pressure      "200"
-    w /proc/sys/vm/dirty_expire_centisecs  "6000"
-    w /proc/sys/vm/dirty_writeback_centisecs "1500"
-    w /proc/sys/kernel/sched_boost         "0"
-    thermal_full_restore
-    restore_battery_spoof
-    resetprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null ||         setprop persist.vendor.battery.bypass_temp_thresh "41" 2>/dev/null || true
-    setprop debug.sf.disable_backpressure   "0" 2>/dev/null || true
-    setprop debug.sf.enable_gl_backpressure "1" 2>/dev/null || true
-    start logd 2>/dev/null || true
-    unfreeze_all
-    printf '%s' "battery" > "$PROFILE"
-    STATE="BATTERY"
-    log "BATTERY: Silver≤1248 Gold≤1574 | powersave"
-}
-
-enter_competitive() {
-    log "→ COMPETITIVE (Extreme Ranked Mode)"
-    # ── CPU: Gold pinned near max, Silver high floor ──────────────────────────
-    # performance governor: zero scheduling latency, no governor delay
-    # Gold: min=2092800 (95% of max 2208000) — stays near ceiling
-    # Silver: min=1593600 — all threads get fast A55 cores
-    cpu_set "performance" "1593600" "1804800" "2092800" "2208000"
-    # No schedutil tunables needed — performance governor ignores them
-    # ── GPU: fixed at near-max — no devfreq variation ─────────────────────────
-    # Adreno 618: force to pwrlevel=1 (596MHz) sustained
-    # msm-adreno-tz can still burst to 700MHz from there
-    w $GPU/devfreq/governor        "msm-adreno-tz"
-    w $GPU/force_clk_on            "1"
-    w $GPU/force_bus_on            "1" 2>/dev/null || true
-    w $GPU/bus_split               "0"
-    w $GPU/max_pwrlevel            "0"   # 700MHz ceiling
-    w $GPU/min_pwrlevel            "1"   # 596MHz floor (higher than gaming)
-    w $GPU/devfreq/min_freq        "596000000"
-    w $GPU/devfreq/max_freq        "800000000"  # true max on this kernel
-    w $GPU/devfreq/polling_interval "2"   # 2ms — fastest possible sampling
-    w $GPU/thermal_pwrlevel        "0"
-    # adreno_idler_active: not present on this kernel
-    echo "0" > "$GPU/throttling" 2>/dev/null || true
-    # ── I/O ──────────────────────────────────────────────────────────────────
-    io_gaming
-    # ── Memory: absolute minimum swap, aggressive dirty writeback ─────────────
-    w /proc/sys/vm/swappiness              "5"
-    w /proc/sys/vm/dirty_expire_centisecs  "50"
-    w /proc/sys/vm/dirty_writeback_centisecs "25"
-    zram_gaming       # lz4 + page-cluster=0 + vfs_cache_pressure=30
-    lmk_gaming        # same protection as gaming — CoD threads safe
-    w /proc/sys/kernel/sched_boost         "1"
-    net_gaming        # BBR + UDP buffers — identical to gaming
-    # ── Thermal: always fully disabled in competitive ─────────────────────────
+enter_cooking() {
+    _can_enter || return 0
+    log "→ COOKING"; _cfg_load_cache
+    cpu_hotplug_online_all
     thermal_full_disable
-    # ── Battery spoof ────────────────────────────────────────────────────────
-    spoof_battery
-    resetprop persist.vendor.battery.bypass_temp_thresh "30" 2>/dev/null ||         setprop persist.vendor.battery.bypass_temp_thresh "30" 2>/dev/null || true
-    # ── Scheduler: max boost ─────────────────────────────────────────────────
-    w /dev/stune/top-app/schedtune.boost        "10"
-    w /dev/stune/top-app/schedtune.prefer_idle  "1"
-    w /dev/stune/foreground/schedtune.boost     "10"
-    echo "0-7" > /dev/cpuset/top-app/cpus       2>/dev/null || true
-    echo "0-7" > /dev/cpuset/foreground/cpus    2>/dev/null || true
-    w /proc/sys/kernel/sched_window_stats_policy  "2"
-    w /proc/sys/kernel/sched_ravg_hist_size        "3"
-    w /proc/sys/kernel/sched_account_wait_time     "1"
-    w /proc/sys/kernel/sched_freq_inc_notify       "128"
-    w /proc/sys/kernel/sched_freq_dec_notify       "128"
-    local IB=/sys/module/cpu_boost/parameters
-    if [ -d "$IB" ]; then
-        w "$IB/input_boost_enabled" "1"
-        printf '%s' "0:1593600 1:1593600 2:1593600 3:1593600 4:1593600 5:1593600 6:2092800 7:2092800"             > "$IB/input_boost_freq" 2>/dev/null || true
-        w "$IB/input_boost_ms" "60"
-    fi
-    local irq_dir irq_name
-    for irq_dir in /proc/irq/*/; do
-        irq_name=$(cat "${irq_dir}actions" 2>/dev/null)
-        echo "$irq_name" | grep -qiE "wlan|rmnet|ipa|smd|gsi" &&             printf '%s' "fc" > "${irq_dir}smp_affinity" 2>/dev/null || true
+    lmh_disable
+
+    # Kill auch msm_thermal falls vorhanden (root cause CPU FREEZE)
+    for _te_pid in $(pgrep -f "msm_thermal\|thermal-engine\|mi_thermald\|themal" 2>/dev/null); do
+        kill -9 "$_te_pid" 2>/dev/null || true
     done
-    setprop debug.sf.disable_backpressure   "1" 2>/dev/null || true
-    setprop debug.sf.enable_gl_backpressure "0" 2>/dev/null || true
-    setprop debug.sf.set_idle_timer_ms      "0" 2>/dev/null || true
-    setprop persist.sys.game_mode           "1" 2>/dev/null || true
-    setprop persist.sys.vulkan.perf_mode    "1" 2>/dev/null || true
-    setprop debug.sf.latch_unsignaled       "1" 2>/dev/null || true
-    cmd game set --downscale 1.0 com.activision.callofduty.shooter 2>/dev/null || true
-    setprop persist.vendor.qti.games.gt.fps "120" 2>/dev/null || true
-    # Fixed Performance Mode: PowerHal hält alle Kerne auf max via PowerManager API
-    # Android 12+ / Lunaris 3.8 AOSP — cmd power verfügbar
-    cmd power set-fixed-performance-mode-enabled true 2>/dev/null || true
-    stop logd 2>/dev/null || true
-    w /proc/sys/kernel/sched_child_runs_first "1"
-    w /proc/sys/vm/extra_free_kbytes "24576"
-    tune_codm
-    THERMAL_CAPPED=0
-    printf '%s' "gaming" > "$PROFILE"
-    STATE="COMPETITIVE"
-    log "COMPETITIVE: Gold≥2092800 Silver≥1593600 GPU≥596MHz | thermal=OFF | fixed-perf"
+
+    cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
+    gpu_cooking; io_cooking; sched_cooking; vm_cooking; lmk_default; zram_cooking
+    lru_gen_enable; sf_daily; wakelock_block
+    detect_net_type; net_cooking; bt_cooking; spoof_battery
+    resetprop persist.vendor.battery.bypass_temp_thresh "30" 2>/dev/null || true
+    setprop debug.sf.disable_backpressure              "1"   2>/dev/null || true
+    setprop debug.sf.enable_gl_backpressure            "0"   2>/dev/null || true
+    setprop debug.sf.latch_unsignaled                  "0"   2>/dev/null || true
+    setprop persist.sys.game_mode                      "1"   2>/dev/null || true
+    setprop persist.sys.vulkan.perf_mode               "1"   2>/dev/null || true
+    setprop persist.vendor.qti.games.gt.fps            "120" 2>/dev/null || true
+    cmd game set --downscale 1.0 "$CODM_PKG"           2>/dev/null || true
+    w /sys/class/power_supply/battery/system_temp_level "0"
+    tune_cooking "$CODM_PKG"; THERMAL_CAPPED=0
+    printf '%s' "cooking" > "$PROFILE"; STATE="COOKING"
+    log "COOKING: Silver 1497-1804 | Gold 2169-2304 (schedutil EAS=0) | GPU max 650MHz floor | hotplug=${CFG_CPU_HOTPLUG}"
 }
 
 enter_thermal_limit() {
     local temp="${1:-82}"
-    log "→ THERMAL_LIMIT (${temp}°C)"
-    # Drop min floors to allow cooling — keep schedutil, let it govern freely
-    cpu_set "schedutil" "300000" "1248000" "300000" "1574400"
-    schedutil_set "50" "1248000" "4000" "32000" \
-                  "50" "1574400" "4000" "32000"
-    # GPU: let thermal engine manage again
+    warn "→ THERMAL_LIMIT (${temp}°C)"
+    cpu_hotplug_online_all
+    cpu_set "schedutil" "576000" "1612800" "652800" "1939200"
     w $GPU/thermal_pwrlevel "1"
-    w $GPU/devfreq/min_freq "257000000"
-    w /proc/sys/kernel/sched_boost "0"
-    thermal_full_restore   # re-enable thermal engine to cool down
-    PRE_THERMAL_STATE="$STATE"   # remember where to return
-    printf '%s' "gaming" > "$PROFILE"
-    STATE="THERMAL_LIMIT"
-    log "THERMAL_LIMIT: cooling from $PRE_THERMAL_STATE, recover at <77°C"
+    w $GPU/devfreq/max_freq "650000000"
+    w $GPU/devfreq/min_freq "430000000"
+    sched_daily; thermal_full_restore; wakelock_restore
+    PRE_THERMAL_STATE="$STATE"
+    printf '%s' "gaming" > "$PROFILE"; STATE="THERMAL_LIMIT"
+    log "THERMAL_LIMIT: cooling from $PRE_THERMAL_STATE, recover <77°C"
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# APP DETECTION — cgroup, zero binder IPC (Encore/our approach)
-# ═══════════════════════════════════════════════════════════════════════════════
-get_foreground_app() {
-    local pid
-    pid=$(cat /sys/fs/cgroup/top-app/cgroup.procs 2>/dev/null | head -1)
-    [ -z "$pid" ] && pid=$(cat /sys/fs/cgroup/top-app/tasks 2>/dev/null | head -1)
-    [ -z "$pid" ] && return
-    cat "/proc/${pid}/cmdline" 2>/dev/null | tr -d '\0' | cut -d: -f1
+# ══ STARTUP ═══════════════════════════════════════════════════════════════════
+_startup() {
+    if [ -f "$LOCK" ]; then
+        local op; op=$(cat "$LOCK" 2>/dev/null)
+        if [ -n "$op" ] && kill -0 "$op" 2>/dev/null; then
+            local op_cmd
+            op_cmd=$(cat "/proc/$op/cmdline" 2>/dev/null | tr -d '\0')
+            case "$op_cmd" in
+                *k6a-controller*)
+                    err "Controller läuft bereits (PID $op)"; exit 1 ;;
+                *)
+                    warn "Stale lock (PID $op ist kein k6a-controller: ${op_cmd:-?}) -> ignoriert"
+                    rm -f "$LOCK" ;;
+            esac
+        else
+            rm -f "$LOCK"
+        fi
+    fi
+    echo $$ > "$LOCK"
+    _cfg_load_cache; _cache_fallback_zone
+    detect_kernel_features
+    printf 'pid=%s\nstate=STARTING\nprofile=daily\nmanual_profile=daily\n' "$$" > "$DATA" 2>/dev/null || true
+    log "k6a-controller v9.1 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
+    log "GPU: 8 pwrlevels 140-800MHz | Silver: 576-1804MHz | Gold: 652-2304MHz"
+    log "Thermal: zone24=Silver zone25=Gold [verifiziert] | BCL zone7/8 geschützt"
+    log "Sched: EAS+uclamp+SCHED_CASS (NO WALT, NO schedtune) | HZ=250 | BBR=default"
+    [ -n "$TZ_FALLBACK" ] && log "TZ_FALLBACK: zone0 (pm6150-tz) gecacht"
+    if [ -f "$PAUSE_FILE" ]; then
+        _PAUSED=1; log "⏸ PAUSED"
+        thermal_full_restore; restore_battery_spoof; return
+    fi
+    enter_daily
+    pgrep -x "k6a-daemon" >/dev/null 2>&1 || {
+        "$MODDIR/bin/k6a-daemon" "$MODDIR" >> "$MODDIR/config/daemon.log" 2>&1 &
+        log "k6a-daemon gestartet (PID $!)"
+    }
+    clean_ram
+    [ -f "$CACHE_TRIGGER" ] && { rm -f "$CACHE_TRIGGER"; clean_cache; }
 }
 
-is_game_pkg() {
-    local pkg="$1" prof
-    # per_app.conf hat Vorrang
-    prof=$(grep "^${pkg}=" "$MODDIR/config/per_app.conf" 2>/dev/null | cut -d= -f2)
-    [ "$prof" = "gaming" ]      && return 0
-    [ "$prof" = "competitive" ] && return 2   # 2 = competitive
-    [ "$prof" = "balanced" ]    && return 1   # explizit balanced
-    # CODM primary package
-    [ "$pkg" = "com.activision.callofduty.shooter" ] && return 0
-    # Weitere bekannte Games
-    echo "$pkg" | grep -qiE "callofduty|brawlstars|pubgmobile|freefire|mobilelegend|clashof|genshin|honkai|wzm|roblox" && return 0
-    return 1
-}
+# ══ MAIN LOOP ═════════════════════════════════════════════════════════════════
+_startup
 
-# CODM läuft: prüfe ob Match aktiv (GameActivity vs Menü)
-# Nutzt /proc/<pid>/status — kein binder
-is_codm_in_match() {
-    local pid
-    pid=$(cat /sys/fs/cgroup/top-app/cgroup.procs 2>/dev/null | head -1)
-    [ -z "$pid" ] && return 1
-    local pkg
-    pkg=$(cat "/proc/${pid}/cmdline" 2>/dev/null | tr -d '\0' | cut -d: -f1)
-    [ "$pkg" = "com.activision.callofduty.shooter" ] || return 1
-    # Thread count: Menü ~40 threads, Match ~80+ threads
-    local threads
-    threads=$(cat "/proc/${pid}/status" 2>/dev/null | grep "^Threads:" | awk '{print $2}')
-    [ "${threads:-0}" -ge 60 ] && return 0
-    return 1
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# APP FREEZE ENGINE — SIGSTOP/SIGCONT
-# Only active outside GAMING state — no CPU spikes during CoD
-# ═══════════════════════════════════════════════════════════════════════════════
-_signal_pkg() {
-    local sig="$1" pkg="$2" pids
-    pids=$(pidof "$pkg" 2>/dev/null)
-    [ -z "$pids" ] && pids=$(grep -rl "^$pkg" /proc/*/cmdline 2>/dev/null \
-        | grep -oE '/proc/[0-9]+' | grep -oE '[0-9]+' | tr '\n' ' ')
-    [ -z "$pids" ] && return 0
-    local p; for p in $pids; do kill -"$sig" "$p" 2>/dev/null || true; done
-}
-
-freeze_for() {
-    [ "$STATE" = "GAMING" ] && return 0
-    local trigger="$1" targets pkg
-    targets=$(grep "^${trigger}=" "$FREEZE" 2>/dev/null | cut -d= -f2)
-    [ -z "$targets" ] && return 0
-    local IFS_OLD="$IFS"; IFS=','
-    for pkg in $targets; do
-        pkg=$(printf '%s' "$pkg" | tr -d ' ')
-        [ -n "$pkg" ] && _signal_pkg SIGSTOP "$pkg" && log "❄ $pkg"
-    done
-    IFS="$IFS_OLD"
-    printf '%s\n' "$targets" > "$MODDIR/config/frozen_${trigger##*.}"
-    grep -v "^#" "$FREEZE" 2>/dev/null > "$FREEZE_DUMP" || true
-}
-
-unfreeze_for() {
-    local trigger="$1" sf="$MODDIR/config/frozen_${trigger##*.}" targets pkg
-    [ -f "$sf" ] || return 0
-    targets=$(cat "$sf")
-    local IFS_OLD="$IFS"; IFS=','
-    for pkg in $targets; do
-        pkg=$(printf '%s' "$pkg" | tr -d ' ')
-        [ -n "$pkg" ] && _signal_pkg SIGCONT "$pkg"
-    done
-    IFS="$IFS_OLD"
-    rm -f "$sf"
-    log "▶ unfreeze: $trigger"
-}
-
-unfreeze_all() {
-    local sf targets pkg
-    for sf in "$MODDIR/config/frozen_"*; do
-        [ -f "$sf" ] || continue
-        targets=$(cat "$sf")
-        local IFS_OLD="$IFS"; IFS=','
-        for pkg in $targets; do
-            pkg=$(printf '%s' "$pkg" | tr -d ' ')
-            [ -n "$pkg" ] && _signal_pkg SIGCONT "$pkg"
-        done
-        IFS="$IFS_OLD"
-        rm -f "$sf"
-    done
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# CACHE / RAM
-# ═══════════════════════════════════════════════════════════════════════════════
-clean_cache() {
-    log "Cache: cleaning"
-    find /data/data/*/cache /data/data/*/code_cache \
-         /data/user_de/*/*/cache /sdcard/Android/data/*/cache \
-         -mindepth 1 -delete 2>/dev/null || true
-    sync
-    date '+%d.%m.%Y %H:%M:%S' > "$CACHE_LAST"
-    log "Cache: done"
-}
-
-clean_ram() {
-    [ "$STATE" = "GAMING" ] && { log "RAM: skip (gaming)"; return; }
-    log "RAM: cleaning"
-    am kill-all 2>/dev/null || true
-    sync
-    w /proc/sys/vm/drop_caches    "3"
-    w /proc/sys/vm/compact_memory "1"
-    log "RAM: done"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DATA.TXT — atomic write, consumed by k6a-daemon WebSocket server
-# ═══════════════════════════════════════════════════════════════════════════════
-write_data() {
-    local kern android sdk bat_l bat_s bat_t_raw bat_t
-    local ut_raw ut_h ut_m manual_p last_clean ping_val
-    local cache_kb mem_total mem_avail mem_used mem_mb
-    local th_en sp_en sp_t freeze_line log_line
-
-    kern=$(uname -r 2>/dev/null || printf '?')
-    android=$(getprop ro.build.version.release 2>/dev/null || printf '?')
-    sdk=$(getprop ro.build.version.sdk 2>/dev/null || printf '?')
-    bat_l=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null || printf '?')
-    bat_s=$(cat /sys/class/power_supply/battery/status   2>/dev/null || printf '?')
-    bat_t_raw=$(cat /sys/class/power_supply/battery/temp 2>/dev/null || printf '0')
-    bat_t=$(printf '%s' "$bat_t_raw" | awk '{printf "%.1f",$1/10}')
-    ut_raw=$(cut -d. -f1 /proc/uptime 2>/dev/null || printf '0')
-    ut_h=$(( ut_raw / 3600 )); ut_m=$(( (ut_raw % 3600) / 60 ))
-    manual_p=$(cat "$MANUAL_P" 2>/dev/null || printf 'balanced')
-    last_clean=$(cat "$CACHE_LAST" 2>/dev/null || printf '')
-    ping_val=$(cat "$MODDIR/config/ping.txt" 2>/dev/null || printf '')
-    cache_kb=$(du -sk /data/data/*/cache /data/data/*/code_cache \
-        /data/user_de/*/*/cache /sdcard/Android/data/*/cache 2>/dev/null \
-        | awk '{s+=$1}END{printf "%d",s+0}')
-    mem_total=$(grep MemTotal     /proc/meminfo | awk '{print $2}')
-    mem_avail=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
-    mem_used=$(( (mem_total - mem_avail) / 1024 ))
-    mem_mb=$(( mem_total / 1024 ))
-    th_en=$(cfg thermal_disable);         th_en=${th_en:-0}
-    auto_en=$(cfg auto_detection);         auto_en=${auto_en:-0}
-    sp_en=$(cfg battery_spoof_enable);    sp_en=${sp_en:-0}
-    sp_t=$(cfg battery_spoof_temp);       sp_t=${sp_t:-1}
-    freeze_line=$(grep -v "^#" "$FREEZE" 2>/dev/null | grep "=" | tr '\n' '|')
-    log_line=$(tail -30 "$LOG" 2>/dev/null | tr '\n' '\x01')
-
-    {
-        printf 'kernel=%s\n'              "$kern"
-        printf 'android=Android %s (API %s)\n' "$android" "$sdk"
-        printf 'bat=%s%% - %s\n'         "$bat_l" "$bat_s"
-        printf 'bat_temp=%s\n'           "$bat_t"
-        printf 'uptime=%sh %sm\n'        "$ut_h" "$ut_m"
-        # WebUI kennt nur balanced/gaming/battery — COMPETITIVE zeigt als gaming
-        local _disp_state; _disp_state="$STATE"
-        [ "$_disp_state" = "COMPETITIVE" ] && _disp_state="gaming"
-        [ "$_disp_state" = "THERMAL_LIMIT" ] && _disp_state="gaming"
-        _disp_state=$(printf '%s' "$_disp_state" | tr '[:upper:]' '[:lower:]')
-        printf 'profile=%s\n'            "$_disp_state"
-        printf 'manual_profile=%s\n'     "$manual_p"
-        printf 'pid=%s\n'                "$$"
-        printf 'cache_kb=%s\n'           "$cache_kb"
-        printf 'last_clean=%s\n'         "$last_clean"
-        printf 'ping=%s\n'               "$ping_val"
-        printf 'ram_used=%s\n'           "$mem_used"
-        printf 'ram_total=%s\n'          "$mem_mb"
-        printf 'conf_thermal=%s\n'       "$th_en"
-        printf 'conf_auto=%s\n'          "$auto_en"
-        printf 'conf_spoof_enable=%s\n'  "$sp_en"
-        printf 'conf_spoof_temp=%s\n'    "$sp_t"
-        printf 'freeze=%s\n'             "$freeze_line"
-        printf 'log=%s\n'                "$log_line"
-    } > "${DATA}.tmp" && mv "${DATA}.tmp" "$DATA"
-
-    grep -v "^#" "$FREEZE" 2>/dev/null > "$FREEZE_DUMP" || true
-}
-
-write_ping() {
-    local ms
-    ms=$(ping -c 1 -W 2 1.1.1.1 2>/dev/null | sed -n 's/.*time=\([0-9.]*\).*/\1/p')
-    printf '%s\n' "${ms:-timeout}" > "$MODDIR/config/ping.txt"
-}
-
-cfg_mtime() { stat -c '%Y' "$CONFIG" 2>/dev/null || printf '0'; }
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STARTUP
-# ═══════════════════════════════════════════════════════════════════════════════
-[ -f "$LOCK" ] && kill "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null || true
-printf '%d\n' "$$" > "$LOCK"
-
-# DEBUG Flag initial laden
-DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
-
-log "k6a-controller v7.1.1 — SM7150 sweet_k6a | Openela 4.14 | Lunaris 3.8"
-log "Topology: Silver=cpu0-5/policy0 Gold=cpu6-7/policy6"
-dbg "debug=$DEBUG | thread_pin=$(cfg thread_pin_enable) | thermal_pred=$(cfg thermal_prediction_enable)"
-
-# GPU Driver zur Laufzeit prüfen und setzen (ersetzt system.prop boot-time prop)
-apply_gpu_driver
-
-[ -f "$MANUAL_P" ] || printf 'balanced' > "$MANUAL_P"
-LAST_CFG_MTIME=$(cfg_mtime)
-PREV_TEMP=$(thermal_cpu_temp)
-
-# irqbalance stoppen damit unsere IRQ-Affinität nicht sofort überschrieben wird
-stop irqbalance 2>/dev/null || true
-for _ib_pid in $(pgrep irqbalance 2>/dev/null); do
-    kill -9 "$_ib_pid" 2>/dev/null || true
-done
-log "irqbalance: stopped (SIGKILL)"
-apply_irq_affinity
-
-write_ping &
-enter_balanced
-write_data
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MAIN LOOP — 3s tick
-# Encore principle: shell loop is ONLY for event detection.
-# All heavy work happens in state transition functions (called once per change).
-# ═══════════════════════════════════════════════════════════════════════════════
 while true; do
 
-    # ── Trigger files (immediate) ─────────────────────────────────────────────
-    if [ -f "$CACHE_TRIGGER" ]; then
-        rm -f "$CACHE_TRIGGER"; clean_cache; write_data
+    if [ -f "$PAUSE_FILE" ]; then
+        [ "$_PAUSED" = "0" ] && {
+            _PAUSED=1; log "⏸ PAUSED"
+            thermal_full_restore; restore_battery_spoof
+        }
+        sleep 3; TICK=$(( TICK + 1 )); continue
     fi
-    if [ -f "$RAM_TRIGGER" ]; then
-        rm -f "$RAM_TRIGGER"; clean_ram; write_data
-    fi
+    [ "$_PAUSED" = "1" ] && { _PAUSED=0; log "▶ RESUMED"; _cfg_load_cache; }
 
-    # ── SIGHUP — Config Hot Reload (von k6a-daemon inotify getriggert) ────────
     if [ "$RELOAD_FLAG" = "1" ]; then
         RELOAD_FLAG=0
-        DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
-        log "Config neu geladen (SIGHUP)"
-        dbg "debug=$DEBUG thermal_disable=$(cfg thermal_disable) thread_pin=$(cfg thread_pin_enable)"
-        case "$STATE" in
-            GAMING|THERMAL_LIMIT) enter_gaming   ;;
-            COMPETITIVE)          enter_competitive ;;
-            *)                    enter_balanced  ;;
+        _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp
+        log "SIGHUP: State=$STATE → manual=$MANUAL (Debounce reset)"
+        _cfg_load_cache
+        _enter_manual "$MANUAL_UC"
+        write_data; TICK=$(( TICK + 1 )); sleep 3; continue
+    fi
+
+    if [ -f "$THERMAL_EVENT" ]; then
+        rm -f "$THERMAL_EVENT" 2>/dev/null
+        [ "$STATE" = "COOKING" ] && {
+            _tt=$(thermal_cpu_temp)
+            [ "${_tt:-0}" -ge 82 ] && {
+                log "Transition: $STATE → THERMAL_LIMIT"
+                enter_thermal_limit "$_tt"
+                write_data
+            }
+        }
+    fi
+
+    [ -f "$CACHE_TRIGGER" ] && { rm -f "$CACHE_TRIGGER"; clean_cache; }
+    [ -f "$RAM_TRIGGER"   ] && { rm -f "$RAM_TRIGGER";   clean_ram;   }
+
+    _mt=$(stat -c %Y "$CONFIG" 2>/dev/null || echo 0)
+    if [ "$_mt" != "$LAST_CFG_MTIME" ] && [ "$_mt" != "0" ]; then
+        LAST_CFG_MTIME=$_mt
+        _ms=$(( $(date +%s) - _mt ))
+        _cfg_load_cache
+        _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp
+        log "Config mtime → manual=$MANUAL (State=$STATE)"
+        [ "$_ms" -ge 5 ] && case "$STATE" in
+            COOKING)
+                [ "$MANUAL" = "daily" ] && _enter_manual "DAILY" || _enter_manual "COOKING" ;;
+            THERMAL_LIMIT) : ;;
+            *)
+                [ "$MANUAL" = "cooking" ] && _enter_manual "COOKING" || _enter_manual "DAILY" ;;
         esac
-        LAST_CFG_MTIME=$(cfg_mtime)
         write_data
     fi
 
-    # ── Config hot-reload (mtime-basiert als Fallback wenn kein SIGHUP) ───────
-    mtime=$(cfg_mtime)
-    if [ "$mtime" != "$LAST_CFG_MTIME" ]; then
-        LAST_CFG_MTIME="$mtime"
-        log "Config changed (mtime) — reapplying $STATE"
-        case "$STATE" in
-            GAMING|THERMAL_LIMIT) enter_gaming   ;;
-            *)                    enter_balanced  ;;
-        esac
-        write_data
-    fi
-
-    # ── Determine target state ────────────────────────────────────────────────
     TARGET=""
-    MANUAL=$(cat "$MANUAL_P" 2>/dev/null || printf 'balanced')
-    # COMPETITIVE mode: nur wenn thermal_disable=1 aktiv (bewusste Wahl)
-    [ "$MANUAL" = "competitive" ] && [ "$(cfg thermal_disable)" != "1" ] &&         MANUAL="gaming"   # Fallback: competitive ohne thermal_disable → gaming
+    _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp || MANUAL=${MANUAL:-daily}
 
     if [ "$STATE" = "THERMAL_LIMIT" ]; then
         temp=$(thermal_cpu_temp)
-        if [ "${temp:-99}" -lt 77 ]; then
-            TARGET="${PRE_THERMAL_STATE:-GAMING}"
-            log "Thermal recovery: → $TARGET (${temp}°C)"
-        fi
-
-    elif [ "$(cfg auto_detection)" = "1" ] && [ $(( TICK % 5 )) -eq 0 ]; then
-        # Poll every 15s — zero binder, cgroup read only
-        APP=$(get_foreground_app)
-        if [ -n "$APP" ] && [ "$APP" != "$LAST_APP" ]; then
-            LAST_APP="$APP"
-            # Freeze engine — suspended during gaming (no CPU spikes)
-            if [ "$STATE" != "GAMING" ]; then
-                [ -n "$LAST_FREEZE_TRIGGER" ] && [ "$APP" != "$LAST_FREEZE_TRIGGER" ] && {
-                    unfreeze_for "$LAST_FREEZE_TRIGGER"; LAST_FREEZE_TRIGGER=""
-                }
-                grep -q "^${APP}=" "$FREEZE" 2>/dev/null && {
-                    freeze_for "$APP"; LAST_FREEZE_TRIGGER="$APP"
-                }
-            fi
-            # Profile decision — per_app > auto-detect > manual
-            is_game_pkg "$APP"
-            _GRET=$?
-            if [ "$_GRET" -eq 2 ]; then
-                TARGET="COMPETITIVE"
-            elif [ "$_GRET" -eq 0 ]; then
-                # CODM auto-detect: match active → COMPETITIVE if enabled, else GAMING
-                if [ "$APP" = "com.activision.callofduty.shooter" ] &&                    [ "$MANUAL" = "competitive" ] && is_codm_in_match; then
-                    TARGET="COMPETITIVE"
-                else
-                    TARGET="GAMING"
-                fi
-            else
-                case "$MANUAL" in
-                    gaming)      TARGET="GAMING"       ;;
-                    competitive) TARGET="COMPETITIVE"  ;;
-                    battery)     TARGET="BATTERY"      ;;
-                    *)           TARGET="BALANCED"     ;;
-                esac
-            fi
-        else
-            case "$MANUAL" in
-                gaming)      TARGET="GAMING"       ;;
-                competitive) TARGET="COMPETITIVE"  ;;
-                battery)     TARGET="BATTERY"      ;;
-                *)           TARGET="BALANCED"     ;;
-            esac
-        fi
+        [ "${temp:-99}" -lt 77 ] && {
+            TARGET="${PRE_THERMAL_STATE:-COOKING}"
+            log "Thermal recovery → $TARGET (${temp}°C)"; }
     else
-        case "$MANUAL" in
-            gaming)      TARGET="GAMING"       ;;
-            competitive) TARGET="COMPETITIVE"  ;;
-            battery)     TARGET="BATTERY"      ;;
-            *)           TARGET="BALANCED"     ;;
-        esac
+        case "$MANUAL" in cooking) TARGET="COOKING" ;; *) TARGET="DAILY" ;; esac
     fi
 
-    # ── CPU-Freq periodisch sichern (alle 9s im Gaming) ─────────────────────
-    # Thermal-Engine kann max_freq zurücksetzen → min wird geclampt → FROZEN
-    if [ "$STATE" = "GAMING" ] || [ "$STATE" = "COMPETITIVE" ]; then
-        if [ $(( TICK % 3 )) -eq 0 ]; then
-            # GPU min_freq sichern (thermal-engine kann es zurücksetzen)
-            _gpu_min=$(cat /sys/class/kgsl/kgsl-3d0/devfreq/min_freq 2>/dev/null)
-            [ "${_gpu_min:-0}" -lt 490000000 ] && {
-                [ -f "/sys/class/kgsl/kgsl-3d0/devfreq/min_freq" ] &&                     echo "490000000" > /sys/class/kgsl/kgsl-3d0/devfreq/min_freq 2>/dev/null
-                dbg "GPU min_freq war ${_gpu_min} → re-apply 490MHz"
-            }
-            _gmax=$(cat /sys/devices/system/cpu/cpu6/cpufreq/scaling_max_freq 2>/dev/null)
-            if [ "${_gmax:-0}" -lt 1785600 ]; then
-                dbg "Thermal-Engine hat Gold gecappt auf ${_gmax} → re-apply"
-                echo "1785600" > /sys/devices/system/cpu/cpu6/cpufreq/scaling_min_freq 2>/dev/null
-                echo "1785600" > /sys/devices/system/cpu/cpu7/cpufreq/scaling_min_freq 2>/dev/null
-                echo "2208000" > /sys/devices/system/cpu/cpu6/cpufreq/scaling_max_freq 2>/dev/null
-                echo "2208000" > /sys/devices/system/cpu/cpu7/cpufreq/scaling_max_freq 2>/dev/null
-            fi
-            _smax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)
-            if [ "${_smax:-0}" -lt 1248000 ]; then
-                dbg "Thermal-Engine hat Silver gecappt auf ${_smax} → re-apply"
-                for _c in 0 1 2 3 4 5; do
-                    echo "1248000" > /sys/devices/system/cpu/cpu${_c}/cpufreq/scaling_min_freq 2>/dev/null
-                    echo "1804800" > /sys/devices/system/cpu/cpu${_c}/cpufreq/scaling_max_freq 2>/dev/null
-                done
-            fi
-        fi
-    fi
-
-    # ── Thermal override ──────────────────────────────────────────────────────
-    if [ "$STATE" = "GAMING" ] || [ "$STATE" = "COMPETITIVE" ]; then
+    if [ "$STATE" = "COOKING" ]; then
         temp=$(thermal_cpu_temp)
-        [ "${temp:-0}" -ge 84 ] && TARGET="THERMAL_LIMIT"
-        # Thermale Vorhersage: preemptiver Cap bei +3°C/Tick UND >75°C
+        [ "${temp:-0}" -ge 90 ] && TARGET="THERMAL_LIMIT"
         thermal_predict_check
-        # Thread-Pinning periodisch auffrischen (neue Threads können spawnen)
-        [ $(( TICK % 3 )) -eq 0 ] && tune_codm
-        # IRQ-Affinität periodisch auffrischen (Kernel kann sie nach suspend zurücksetzen)
-        [ $(( TICK % 10 )) -eq 0 ] && apply_irq_affinity
+        [ $(( TICK % 10 )) -eq 0 ] && tune_cooking "$CODM_PKG"
+        [ $(( TICK % 20 )) -eq 0 ] && apply_irq_affinity
+        _stl=$(cat /sys/class/power_supply/battery/system_temp_level 2>/dev/null || echo 0)
+        [ "${_stl:-0}" -gt "0" ] && w /sys/class/power_supply/battery/system_temp_level "0"
+
+        [ $(( TICK % 2 )) -eq 0 ] && {
+            _gm=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
+            _gc=$(cat $GPU/force_clk_on    2>/dev/null || echo 1)
+            _gp=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 0)
+            _gps=$(cat $GPU/pwrscale        2>/dev/null || echo 2)
+            { [ "$_gm" -lt "500000000" ] || [ "$_gc" != "1" ] || [ "$_gp" -gt "0" ] || [ "$_gps" = "1" ]; } && {
+                w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "565000000"
+                w $GPU/devfreq/max_freq "800000000"; w $GPU/min_pwrlevel "$GPU_LVL_650"
+                w $GPU/max_pwrlevel "$GPU_LVL_800"; w $GPU/force_clk_on "1"
+                w $GPU/force_bus_on "1"; w $GPU/pwrscale "0"
+                echo "0" > "$GPU/throttling" 2>/dev/null || true
+                dbg "GPU corrected: min=565MHz max=800MHz pwrlevel=1"
+            }
+        }
+
+    [ $(( TICK % 3 )) -eq 0 ] && {
+        _cm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 9999999)
+        _cmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
+        _cgm=$(cat "$P6/scaling_max_freq" 2>/dev/null || echo 9999999)
+        _cgmin=$(cat "$P6/scaling_min_freq" 2>/dev/null || echo 0)
+        _frozen=0
+        if [ "$_cm" -lt "500000" ]; then
+            _frozen=1
+        elif [ "$_cm" = "$_cmin" ] && [ "$_cm" -lt "1600000" ]; then
+            _frozen=1
+        fi
+        if [ "$_cgm" = "$_cgmin" ] && [ "$_cgm" -gt "1900000" ] 2>/dev/null; then
+            _frozen=1
+        fi
+        if [ "$_frozen" = "1" ]; then
+            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm} Gold min=${_cgmin} max=${_cgm}) — re-apply"
+            for _te in $(pgrep -f "msm_thermal\|thermal-engine\|mi_thermald\|themal" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
+            thermal_full_disable; sleep 0.5
+            lmh_disable
+            cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
+            w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "565000000"
+            w $GPU/devfreq/max_freq "800000000"; w $GPU/force_clk_on "1"
+            echo "0" > "$GPU/throttling" 2>/dev/null || true
+            w /sys/class/power_supply/battery/system_temp_level "0"
+            apply_irq_affinity; log "CPU+GPU+IRQ recovered"
+        fi
+    }
+elif [ "$STATE" = "DAILY" ]; then
+    [ $(( TICK % 6 )) -eq 0 ] && {
+        _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
+        if [ "$_dm" -gt "1300000" ] 2>/dev/null; then
+            dbg "Daily limits verletzt (max=${_dm}) — re-apply"
+            cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
+            cpu_hotplug_offline_gold
+            sched_daily; gpu_daily
+        fi
+    }
     fi
 
-    # ── State transition — only on change ─────────────────────────────────────
-    if [ -n "$TARGET" ] && [ "$TARGET" != "$STATE" ]; then
+    [ -n "$TARGET" ] && [ "$TARGET" != "$STATE" ] && {
         log "Transition: $STATE → $TARGET"
+        # Manuelle Transitions (Manual-Profil oder Thermal Recovery) immer ohne Debounce
         case "$TARGET" in
-            GAMING)         enter_gaming                        ;;
-            COMPETITIVE)    enter_competitive                   ;;
-            BATTERY)        enter_battery                       ;;
-            THERMAL_LIMIT)  enter_thermal_limit "${temp:-82}"   ;;
-            BALANCED)       enter_balanced                      ;;
+            COOKING)       _enter_manual "COOKING"       ;;
+            THERMAL_LIMIT) _enter_no_debounce enter_thermal_limit ;;
+            DAILY)         _enter_manual "DAILY"         ;;
         esac
         write_data
-    fi
+    }
 
     TICK=$(( TICK + 1 ))
-
-    # ── Periodic data refresh ─────────────────────────────────────────────────
-    if [ "$STATE" = "GAMING" ]; then
-        [ $(( TICK % 20 )) -eq 0 ] && write_data
-    else
-        [ $(( TICK % 10 )) -eq 0 ] && write_data
-        [ $(( TICK % 20 )) -eq 0 ] && write_ping &
-    fi
-
+    [ $(( TICK % 3 )) -eq 0 ] && write_data
+    [ "$STATE" != "COOKING" ] && [ $(( TICK % 10 )) -eq 0 ] && write_ping &
+    [ $(( TICK % 10 )) -eq 0 ] && [ "$STATE" = "COOKING" ] && \
+        iw dev wlan0 set power_save off 2>/dev/null || true
+    [ $(( TICK % 30 )) -eq 0 ] && fstrim /data 2>/dev/null || true
     [ $(( TICK % 200 )) -eq 0 ] && log "♥ $STATE tick=$TICK temp=$(thermal_cpu_temp)°C"
     [ $(( TICK % 1000 )) -eq 0 ] && trim_log
-
     sleep 3
 done
