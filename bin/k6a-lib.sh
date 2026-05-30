@@ -502,6 +502,8 @@ vm_daily() {
     w /proc/sys/vm/watermark_scale_factor  "10"
     w /proc/sys/vm/min_free_kbytes         "8192"
     timeout 5 swapoff /data/k6a_swap 2>/dev/null || true
+    echo "1" > /sys/block/zram0/reset 2>/dev/null || true
+    echo "3221225472" > /sys/block/zram0/disksize 2>/dev/null || true
     mkswap /dev/block/zram0 2>/dev/null
     timeout 5 swapon -p 1 /dev/block/zram0 2>/dev/null || true
 }
@@ -518,8 +520,11 @@ vm_cooking() {
     w /proc/sys/vm/min_free_kbytes         "12288"
     w /proc/sys/vm/page-cluster           "0"
     timeout 5 swapoff /dev/block/zram0 2>/dev/null || true
+    echo "1" > /sys/block/zram0/reset 2>/dev/null || true
+    echo "3221225472" > /sys/block/zram0/disksize 2>/dev/null || true
+    mkswap /dev/block/zram0 2>/dev/null
     timeout 5 swapon -p 0 /dev/block/zram0 2>/dev/null || true
-    _log "VM cooking: ZRAM statt UFS-Swap, extra_free=12MB, min_free=12MB"
+    _log "VM cooking: ZRAM 3GB statt UFS-Swap, extra_free=12MB, min_free=12MB"
 }
 
 lmk_default() { w /sys/module/lowmemorykiller/parameters/minfree "18432,23040,27648,32256,55296,80640"; }

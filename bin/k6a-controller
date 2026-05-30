@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v9.14 — 2-Mode-Architektur: daily + cooking
+# k6a-controller  v9.12 — 2-Mode-Architektur: daily + cooking
 # SM7150 / sweet_k6a — Lunaris AOSP 3.9 / VantomKernel 4.14.356-openela-rc1
 #
 # v9.12 Fixes:
@@ -96,7 +96,6 @@ trim_log() {
 
 RELOAD_FLAG=0
 trap 'RELOAD_FLAG=1' HUP
-trap 'log "EXIT: code=$? STATE=$STATE _PAUSED=$_PAUSED TICK=$TICK"' EXIT
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
 # ══ THERMAL MANAGER ═══════════════════════════════════════════════════════════
@@ -353,22 +352,21 @@ _startup() {
     _cfg_load_cache; _cache_fallback_zone
     detect_kernel_features
     printf 'pid=%s\nstate=STARTING\nprofile=daily\nmanual_profile=daily\n' "$$" > "$DATA" 2>/dev/null || true
-    log "k6a-controller v9.14 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
+    log "k6a-controller v9.12 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
     log "GPU: 8 pwrlevels 140-800MHz | Silver: 576-1804MHz | Gold: 652-2304MHz"
     log "Thermal: zone24=Silver zone25=Gold [verifiziert] | BCL zone7/8 geschützt"
     log "Sched: EAS+uclamp+SCHED_CASS (NO WALT, NO schedtune) | HZ=250 | BBR=default"
     [ -n "$TZ_FALLBACK" ] && log "TZ_FALLBACK: zone0 (pm6150-tz) gecacht"
     if [ -f "$PAUSE_FILE" ]; then
         _PAUSED=1; log "⏸ PAUSED"
-        thermal_full_restore; restore_battery_spoof
-        write_data; return
+        thermal_full_restore; restore_battery_spoof; return
     fi
-    enter_daily; write_data
+    enter_daily
     pgrep -x "k6a-daemon" >/dev/null 2>&1 || {
         "$MODDIR/bin/k6a-daemon" "$MODDIR" >> "$MODDIR/config/daemon.log" 2>&1 &
         log "k6a-daemon gestartet (PID $!)"
     }
-    clean_cache
+    clean_ram
     [ -f "$CACHE_TRIGGER" ] && { rm -f "$CACHE_TRIGGER"; clean_cache; }
 }
 
@@ -376,13 +374,11 @@ _startup() {
 _startup
 
 while true; do
-
     if [ -f "$PAUSE_FILE" ]; then
         [ "$_PAUSED" = "0" ] && {
             _PAUSED=1; log "⏸ PAUSED"
             thermal_full_restore; restore_battery_spoof
         }
-        [ $(( TICK % 3 )) -eq 0 ] && write_data
         sleep 3; TICK=$(( TICK + 1 )); continue
     fi
     [ "$_PAUSED" = "1" ] && { _PAUSED=0; log "▶ RESUMED"; _cfg_load_cache; }
@@ -409,13 +405,15 @@ while true; do
     fi
 
     [ -f "$CACHE_TRIGGER" ] && { rm -f "$CACHE_TRIGGER"; clean_cache; }
-    [ -f "$RAM_TRIGGER"   ] && {
+    if [ -f "$RAM_TRIGGER" ]; then
         _rnow=$(date +%s); _rlast=$(cat "$RAM_LAST" 2>/dev/null || echo 0)
-        [ $(( _rnow - _rlast )) -ge "$RAM_COOLDOWN" ] && {
+        if [ $(( _rnow - _rlast )) -ge "$RAM_COOLDOWN" ]; then
             clean_ram; echo "$_rnow" > "$RAM_LAST"
-        } || dbg "RAM clean skipped (cooldown ${RAM_COOLDOWN}s)"
+        else
+            dbg "RAM clean skipped (cooldown ${RAM_COOLDOWN}s)"
+        fi
         rm -f "$RAM_TRIGGER"
-    }
+    fi
 
     _mt=$(stat -c %Y "$CONFIG" 2>/dev/null || echo 0)
     if [ "$_mt" != "$LAST_CFG_MTIME" ] && [ "$_mt" != "0" ]; then
@@ -435,23 +433,25 @@ while true; do
     fi
 
     TARGET=""
-    _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp
-    MANUAL=${MANUAL:-daily}
+    _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp || MANUAL=${MANUAL:-daily}
 
     if [ "$STATE" = "THERMAL_LIMIT" ]; then
         temp=$(thermal_cpu_temp)
-        [ "${temp:-99}" -lt "$CFG_THRESH_THERMAL_RECOVER" ] && {
+        if [ "${temp:-99}" -lt "$CFG_THRESH_THERMAL_RECOVER" ]; then
             TARGET="THERMAL_RECOVERY"
-            log "Thermal → THERMAL_RECOVERY (${temp}°C)"; }
+            log "Thermal → THERMAL_RECOVERY (${temp}°C)"
+        fi
     elif [ "$STATE" = "THERMAL_RECOVERY" ]; then
         temp=$(thermal_cpu_temp)
         _now=$(date +%s); _cd=$(( _now - _LAST_THERMAL_TS ))
-        [ "${temp:-99}" -lt "$CFG_THRESH_COOLDOWN" ] && [ "$_cd" -ge "$_THERMAL_COOLDOWN" ] && {
+        if [ "${temp:-99}" -lt "$CFG_THRESH_COOLDOWN" ] && [ "$_cd" -ge "$_THERMAL_COOLDOWN" ]; then
             TARGET="${PRE_THERMAL_STATE:-COOKING}"
-            log "Thermal cooldown → $TARGET (${temp}°C, ${_cd}s)" }
-        [ "${temp:-0}" -ge "$CFG_THRESH_COOKING" ] && {
+            log "Thermal cooldown → $TARGET (${temp}°C, ${_cd}s)"
+        fi
+        if [ "${temp:-0}" -ge "$CFG_THRESH_COOKING" ]; then
             TARGET="THERMAL_LIMIT"
-            warn "THERMAL_RECOVERY → THERMAL_LIMIT (${temp}°C, still heating)" }
+            warn "THERMAL_RECOVERY → THERMAL_LIMIT (${temp}°C, still heating)"
+        fi
     else
         case "$MANUAL" in cooking) TARGET="COOKING" ;; *) TARGET="DAILY" ;; esac
     fi
@@ -465,7 +465,7 @@ while true; do
         _stl=$(cat /sys/class/power_supply/battery/system_temp_level 2>/dev/null || echo 0)
         [ "${_stl:-0}" -gt "0" ] && w /sys/class/power_supply/battery/system_temp_level "0"
 
-        [ $(( TICK % 2 )) -eq 0 ] && {
+        if [ $(( TICK % 2 )) -eq 0 ]; then
             _temp=$(thermal_cpu_temp)
             _gm=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
             _gp=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 4)
@@ -498,20 +498,21 @@ while true; do
                 w $GPU/force_bus_on "1"
                 echo "0" > "$GPU/throttling" 2>/dev/null || true
                 dbg "GPU thermal 72°C+: 565MHz max"
-            elif { [ "$_gm" -lt "500000000" ] || [ "$_gp" -gt "0" ]; }; then
+            else
+                GPU_MAX_FREQ=800000000
                 w $GPU/thermal_pwrlevel "0"
                 w $GPU/devfreq/min_freq "565000000"
-                w $GPU/devfreq/max_freq "$GPU_MAX_FREQ"
+                w $GPU/devfreq/max_freq "800000000"
                 w $GPU/min_pwrlevel "$GPU_LVL_650"
                 w $GPU/max_pwrlevel "$GPU_LVL_800"
                 w $GPU/force_clk_on "1"
                 w $GPU/force_bus_on "1"
                 echo "0" > "$GPU/throttling" 2>/dev/null || true
-                dbg "GPU corrected: min=565MHz max=${GPU_MAX_FREQ}Hz"
+                dbg "GPU uncapped: 565-800MHz (temp ${_temp}°C)"
             fi
-        }
+        fi
 
-    [ $(( TICK % 3 )) -eq 0 ] && {
+    if [ $(( TICK % 3 )) -eq 0 ]; then
         _cm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 9999999)
         _cmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
         _cgm=$(cat "$P6/scaling_max_freq" 2>/dev/null || echo 9999999)
@@ -522,11 +523,13 @@ while true; do
         elif [ "$_cm" = "$_cmin" ] && [ "$_cm" -lt "1600000" ]; then
             _frozen=1
         fi
-        if [ "$_cgm" = "$_cgmin" ] && [ "$_cgm" -gt "1900000" ] 2>/dev/null; then
-            _frozen=1
+        if [ "$STATE" = "COOKING" ] && [ "${_cgm}" -lt "2169600" ] 2>/dev/null; then
+            dbg "Gold capped at ${_cgm}Hz — recovery"
+            lmh_disable
+            cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
         fi
         if [ "$_frozen" = "1" ]; then
-            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm} Gold min=${_cgmin} max=${_cgm}) — re-apply"
+            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm}) — re-apply"
             for _te in $(pgrep -f "msm_thermal\|thermal-engine\|mi_thermald\|themal" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
             thermal_full_disable; sleep 0.5
             lmh_disable
@@ -537,9 +540,9 @@ while true; do
             w /sys/class/power_supply/battery/system_temp_level "0"
             apply_irq_affinity; log "CPU+GPU+IRQ recovered"
         fi
-    }
+    fi
 elif [ "$STATE" = "DAILY" ]; then
-    [ $(( TICK % 6 )) -eq 0 ] && {
+    if [ $(( TICK % 6 )) -eq 0 ]; then
         _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
         if [ "$_dm" -gt "1300000" ] 2>/dev/null; then
             dbg "Daily limits verletzt (max=${_dm}) — re-apply"
@@ -547,16 +550,16 @@ elif [ "$STATE" = "DAILY" ]; then
             cpu_hotplug_offline_gold
             sched_daily; gpu_daily
         fi
-    }
+    fi
 elif [ "$STATE" = "THERMAL_RECOVERY" ]; then
-    [ $(( TICK % 6 )) -eq 0 ] && {
+    if [ $(( TICK % 6 )) -eq 0 ]; then
         _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
         if [ "$_dm" -gt "1300000" ] 2>/dev/null; then
             cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
             cpu_hotplug_offline_gold
             sched_daily; gpu_daily
         fi
-    }
+    fi
     fi
 
     [ -n "$TARGET" ] && [ "$TARGET" != "$STATE" ] && {

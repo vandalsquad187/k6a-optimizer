@@ -80,6 +80,53 @@ echo "  policy6 (Gold):   gov=$p6_gov min=${p6_min}Hz max=${p6_max}Hz"
 p6_up=$(cat /sys/devices/system/cpu/cpufreq/policy6/schedutil/up_rate_limit_us 2>/dev/null || echo "N/A")
 p6_down=$(cat /sys/devices/system/cpu/cpufreq/policy6/schedutil/down_rate_limit_us 2>/dev/null || echo "N/A")
 echo "  policy6 schedutil: up=${p6_up}µs down=${p6_down}µs"
+
+# Gold Cap Check
+if [ "$manual" = "cooking" ] && [ "${p6_max:-0}" -lt "2169600" ] && [ "${p6_max:-0}" -gt "0" ]; then
+    echo "  ⚠ Gold CAPPED! max=${p6_max}Hz < Ziel 2169600Hz"
+fi
+
+# CPU Debug: Hardware-Limits + verfügbare Freqs
+p0_cmin=$(cat /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_min_freq 2>/dev/null || echo "N/A")
+p0_cmax=$(cat /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq 2>/dev/null || echo "N/A")
+p6_cmin=$(cat /sys/devices/system/cpu/cpufreq/policy6/cpuinfo_min_freq 2>/dev/null || echo "N/A")
+p6_cmax=$(cat /sys/devices/system/cpu/cpufreq/policy6/cpuinfo_max_freq 2>/dev/null || echo "N/A")
+echo "  policy0 (Silver): cpuinfo_min=${p0_cmin}Hz cpuinfo_max=${p0_cmax}Hz"
+echo "  policy6 (Gold):   cpuinfo_min=${p6_cmin}Hz cpuinfo_max=${p6_cmax}Hz"
+p0_avail=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies 2>/dev/null || echo "N/A")
+p6_avail=$(cat /sys/devices/system/cpu/cpufreq/policy6/scaling_available_frequencies 2>/dev/null || echo "N/A")
+echo "  policy0 avail_freqs: $p0_avail"
+echo "  policy6 avail_freqs: $p6_avail"
+
+# Limit-Nodes in cpufreq suchen
+for node in cpufreq_limit scaling_max_freq_limit scaling_cur_freq_limit; do
+    for dir in /sys/devices/system/cpu/cpufreq/policy0 /sys/devices/system/cpu/cpufreq/policy6; do
+        [ -f "$dir/$node" ] && echo "  ⚠ $dir/$node = $(cat "$dir/$node" 2>/dev/null)"
+    done
+done
+
+# Per-CPU cpufreq unbekannte Nodes scannen
+for cpu in 6 7; do
+    dir="/sys/devices/system/cpu/cpu${cpu}/cpufreq"
+    if [ -d "$dir" ]; then
+        for entry in "$dir"/*; do
+            [ -f "$entry" ] || continue
+            name="${entry##*/}"
+            case "$name" in
+                scaling_governor|scaling_min_freq|scaling_max_freq|scaling_cur_freq|\
+                scaling_setspeed|scaling_available_frequencies|scaling_driver|scaling_available_governors|\
+                cpuinfo_min_freq|cpuinfo_max_freq|cpuinfo_transition_latency|\
+                related_cpus|affected_cpus|stats) continue ;;
+            esac
+            echo "  cpu${cpu}/cpufreq/$name = $(safe_read "$entry" 1 | tr '\n' ' ' | head -c 80)"
+        done
+    fi
+done
+
+# Limit-überwachende Kernel-Threads/Module
+for mod in cpufreq_limit cpu_freq_limit msm_cpufreq_limit; do
+    lsmod 2>/dev/null | grep -q "$mod" && echo "  ⚠ Kernel-Modul geladen: $mod"
+done
 echo ""
 
 # ── CPU HOTPLUG STATUS ────────────────────────────────────────────────────────
@@ -148,6 +195,17 @@ if [ -d /data/adb/modules/adreno_gpu_driver ]; then
     author=$(grep "^author=" /data/adb/modules/adreno_gpu_driver/module.prop 2>/dev/null | cut -d= -f2-)
     [ -n "$desc" ] && echo "  description      : $desc"
     [ -n "$author" ] && echo "  author           : $author"
+fi
+
+# Cooking-Soll-Vergleich
+if [ "$manual" = "cooking" ]; then
+    echo "  ── Cooking Soll/Ist ──"
+    echo "  expected: force_clk_on=1 force_bus_on=1 min_pwrlevel=5 max_pwrlevel=0"
+    echo "  actual:   force_clk_on=$gpu_clk force_bus_on=$gpu_bus min_pwrlevel=$gpu_pwr_min max_pwrlevel=$gpu_pwr_max"
+    [ "$gpu_clk" != "1" ] && echo "  ⚠ force_clk_on=$gpu_clk (soll 1)"
+    [ "$gpu_bus" != "1" ] && echo "  ⚠ force_bus_on=$gpu_bus (soll 1)"
+    [ "$gpu_pwr_min" != "5" ] 2>/dev/null && echo "  ⚠ min_pwrlevel=$gpu_pwr_min (soll 5 = 650)"
+    [ "$gpu_pwr_max" != "0" ] 2>/dev/null && echo "  ⚠ max_pwrlevel=$gpu_pwr_max (soll 0 = 800)"
 fi
 
 # ── KGSL KOMPLETT-DUMP (mit Timeout, hängt bei GPU-Crash) ─────────────────────
@@ -233,6 +291,28 @@ for te in /vendor/bin/thermal-engine /vendor/bin/mi_thermald; do
         echo "  $te : BIND-MOUNTED (disabled)"
     fi
 done
+echo ""
+
+# ── MSM_THERMAL (Kernel) ─────────────────────────────────────────────────────
+echo "[ MSM_THERMAL (Kernel) ]"
+found=0
+for f in /sys/kernel/msm_thermal/enabled /sys/module/msm_thermal/parameters/enabled; do
+    [ -f "$f" ] && { echo "  $f = $(cat $f 2>/dev/null)"; found=1; }
+done
+lsmod 2>/dev/null | grep -q msm_thermal && { echo "  msm_thermal: geladen (kernel module)"; found=1; }
+[ "$found" = "0" ] && echo "  msm_thermal: kein sysfs/module gefunden (kernel-seitig nicht aktiv)"
+echo ""
+
+# ── LMH STATUS ────────────────────────────────────────────────────────────────
+echo "[ LMH STATUS ]"
+lmh_found=0
+for f in /sys/power/lmh_enabled /sys/kernel/lmh/lmh_enabled \
+         /sys/module/msm_thermal/parameters/lmh_enabled \
+         /sys/devices/system/cpu/cpufreq/policy6/lmh_freq_limit \
+         /sys/devices/system/cpu/cpufreq/policy0/lmh_freq_limit; do
+    [ -f "$f" ] && { echo "  $f = $(cat $f 2>/dev/null)"; lmh_found=1; }
+done
+[ "$lmh_found" = "0" ] && echo "  Keine LMH sysfs gefunden (LMH vermutlich nicht aktiv)"
 echo ""
 
 # ── SCHEDULER + CPUSET ───────────────────────────────────────────────────────
@@ -346,6 +426,10 @@ if [ -f /sys/block/zram0/comp_algorithm ]; then
     zram_size=$(cat /sys/block/zram0/disksize 2>/dev/null || echo "N/A")
     echo "  Algorithm: $zram_algo"
     echo "  Disksize: $zram_size"
+    if [ "${zram_size:-0}" -gt "0" ] 2>/dev/null; then
+        zram_mb=$(( zram_size / 1048576 ))
+        echo "  Disksize (lesbar): ${zram_mb}MB ($(( zram_mb / 1024 ))GB)"
+    fi
 else
     echo "  ZRAM: nicht verfügbar"
 fi
@@ -412,3 +496,4 @@ echo ""
 echo "$SEP"
 echo "DIAGNOSE ENDE"
 echo "$SEP"
+                                                                                                                                                                                                                                                                                                                                                                                             
