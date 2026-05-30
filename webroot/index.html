@@ -351,6 +351,7 @@ body {
       <button class="ctrl-btn" id="ram-btn" onclick="cleanRAM()">🧹 RAM</button>
     </div>
     <div class="ctrl-status" id="restart-status"></div>
+    <div class="ctrl-status" id="pause-status" style="display:none;color:var(--yellow);font-weight:700;">⏸ PAUSED — No updates</div>
   </div>
 
   <div class="card">
@@ -871,6 +872,7 @@ function togglePause() {
 
 function updatePauseBtn(paused) {
     var btn = document.getElementById('pause-btn');
+    var ps = document.getElementById('pause-status');
     if (!btn) return;
     if (paused) {
         btn.textContent = '▶ RESUME';
@@ -879,6 +881,7 @@ function updatePauseBtn(paused) {
         btn.style.color = 'var(--green)';
         btn.style.opacity = '1';
         btn.dataset.paused = '1';
+        if (ps) ps.style.display = 'block';
     } else {
         btn.textContent = '⏸ PAUSE';
         btn.style.background = 'rgba(180,130,0,.18)';
@@ -886,6 +889,7 @@ function updatePauseBtn(paused) {
         btn.style.color = 'var(--yellow)';
         btn.style.opacity = '1';
         btn.dataset.paused = '0';
+        if (ps) ps.style.display = 'none';
     }
 }
 

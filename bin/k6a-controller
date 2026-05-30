@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v9.12 — 2-Mode-Architektur: daily + cooking
+# k6a-controller  v9.14 — 2-Mode-Architektur: daily + cooking
 # SM7150 / sweet_k6a — Lunaris AOSP 3.9 / VantomKernel 4.14.356-openela-rc1
 #
 # v9.12 Fixes:
@@ -96,6 +96,7 @@ trim_log() {
 
 RELOAD_FLAG=0
 trap 'RELOAD_FLAG=1' HUP
+trap 'log "EXIT: code=$? STATE=$STATE _PAUSED=$_PAUSED TICK=$TICK"' EXIT
 DEBUG=$(cfg debug); [ "$DEBUG" != "1" ] && DEBUG=0
 
 # ══ THERMAL MANAGER ═══════════════════════════════════════════════════════════
@@ -352,16 +353,17 @@ _startup() {
     _cfg_load_cache; _cache_fallback_zone
     detect_kernel_features
     printf 'pid=%s\nstate=STARTING\nprofile=daily\nmanual_profile=daily\n' "$$" > "$DATA" 2>/dev/null || true
-    log "k6a-controller v9.12 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
+    log "k6a-controller v9.14 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
     log "GPU: 8 pwrlevels 140-800MHz | Silver: 576-1804MHz | Gold: 652-2304MHz"
     log "Thermal: zone24=Silver zone25=Gold [verifiziert] | BCL zone7/8 geschützt"
     log "Sched: EAS+uclamp+SCHED_CASS (NO WALT, NO schedtune) | HZ=250 | BBR=default"
     [ -n "$TZ_FALLBACK" ] && log "TZ_FALLBACK: zone0 (pm6150-tz) gecacht"
     if [ -f "$PAUSE_FILE" ]; then
         _PAUSED=1; log "⏸ PAUSED"
-        thermal_full_restore; restore_battery_spoof; return
+        thermal_full_restore; restore_battery_spoof
+        write_data; return
     fi
-    enter_daily
+    enter_daily; write_data
     pgrep -x "k6a-daemon" >/dev/null 2>&1 || {
         "$MODDIR/bin/k6a-daemon" "$MODDIR" >> "$MODDIR/config/daemon.log" 2>&1 &
         log "k6a-daemon gestartet (PID $!)"
@@ -380,6 +382,7 @@ while true; do
             _PAUSED=1; log "⏸ PAUSED"
             thermal_full_restore; restore_battery_spoof
         }
+        [ $(( TICK % 3 )) -eq 0 ] && write_data
         sleep 3; TICK=$(( TICK + 1 )); continue
     fi
     [ "$_PAUSED" = "1" ] && { _PAUSED=0; log "▶ RESUMED"; _cfg_load_cache; }
@@ -432,7 +435,8 @@ while true; do
     fi
 
     TARGET=""
-    _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp || MANUAL=${MANUAL:-daily}
+    _mp=$(cat "$MANUAL_P" 2>/dev/null); [ -n "$_mp" ] && MANUAL=$_mp
+    MANUAL=${MANUAL:-daily}
 
     if [ "$STATE" = "THERMAL_LIMIT" ]; then
         temp=$(thermal_cpu_temp)
