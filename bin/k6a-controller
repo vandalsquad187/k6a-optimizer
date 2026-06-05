@@ -1,15 +1,13 @@
 #!/system/bin/sh
 # ═══════════════════════════════════════════════════════════════════════════════
-# k6a-controller  v9.12 — 2-Mode-Architektur: daily + cooking
+# k6a-controller  v9.16 — 2-Mode-Architektur: daily + cooking
 # SM7150 / sweet_k6a — Lunaris AOSP 3.9 / VantomKernel 4.14.356-openela-rc1
 #
-# v9.12 Fixes:
-#   - Debounce blockiert nur Auto-Transitions (Thermal), nicht manuelle Wechsel
-#   - GPU cooking: max 650MHz statt 800MHz, kein min=max Lock, pwrscale=1
-#   - UFS-Swap entfernt (killt System bei I/O-Last), ZRAM statt dessen
-#   - VM: extra_free_kbytes/min_free_kbytes von 24MB auf 12MB reduziert
-#   - Diagnose: KGSL-Timeout bei hang (read mit timeout)
-#   - CPU freeze recovery: killt auch msm_thermal + LMH restlos
+# v9.16 Fixes:
+#   - THERMAL_RECOVERY: PRE_THERMAL_STATE wird nicht mehr überschrieben (Bugfix)
+#   - THERMAL_RECOVERY: Gold bleibt online (cpu_hotplug_offline_gold entfernt)
+#   - THERMAL_RECOVERY: sched_recovery() — cpuset top-app=0-7 (Gold nutzbar)
+#   - THERMAL_RECOVERY-Loop: sched_recovery() statt sched_daily() im main loop
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MODDIR="${1:-/data/adb/modules/Bad4zz89_k6a_tweaks}"
@@ -321,13 +319,11 @@ enter_thermal_recovery() {
     warn "→ THERMAL_RECOVERY (cooldown)"
     cpu_hotplug_online_all
     cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
-    cpu_hotplug_offline_gold
-    gpu_daily; sched_daily; io_daily; sf_daily
+    gpu_daily; sched_recovery; io_daily; sf_daily
     _cfg_load_cache
-    PRE_THERMAL_STATE="$STATE"
     _LAST_THERMAL_TS=$(date +%s)
     printf '%s' "recovery" > "$PROFILE"; STATE="THERMAL_RECOVERY"
-    log "THERMAL_RECOVERY: Gold offline, GPU 267MHz, cooldown ${_THERMAL_COOLDOWN}s <${CFG_THRESH_COOLDOWN}°C"
+    log "THERMAL_RECOVERY: Gold capped 1651MHz, GPU 267MHz, cooldown ${_THERMAL_COOLDOWN}s <${CFG_THRESH_COOLDOWN}°C"
 }
 
 # ══ STARTUP ═══════════════════════════════════════════════════════════════════
@@ -352,7 +348,7 @@ _startup() {
     _cfg_load_cache; _cache_fallback_zone
     detect_kernel_features
     printf 'pid=%s\nstate=STARTING\nprofile=daily\nmanual_profile=daily\n' "$$" > "$DATA" 2>/dev/null || true
-    log "k6a-controller v9.12 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
+    log "k6a-controller v9.16 — 2-Mode (daily/cooking) | SM7150 sweet_k6a | VantomKernel"
     log "GPU: 8 pwrlevels 140-800MHz | Silver: 576-1804MHz | Gold: 652-2304MHz"
     log "Thermal: zone24=Silver zone25=Gold [verifiziert] | BCL zone7/8 geschützt"
     log "Sched: EAS+uclamp+SCHED_CASS (NO WALT, NO schedtune) | HZ=250 | BBR=default"
@@ -379,7 +375,7 @@ while true; do
             _PAUSED=1; log "⏸ PAUSED"
             thermal_full_restore; restore_battery_spoof
         }
-        sleep 3; TICK=$(( TICK + 1 )); continue
+        sleep 1; TICK=$(( TICK + 1 )); continue
     fi
     [ "$_PAUSED" = "1" ] && { _PAUSED=0; log "▶ RESUMED"; _cfg_load_cache; }
 
@@ -389,7 +385,7 @@ while true; do
         log "SIGHUP: State=$STATE → manual=$MANUAL (Debounce reset)"
         _cfg_load_cache
         _enter_manual "$MANUAL_UC"
-        write_data; TICK=$(( TICK + 1 )); sleep 3; continue
+        write_data; TICK=$(( TICK + 1 )); sleep 1; continue
     fi
 
     if [ -f "$THERMAL_EVENT" ]; then
@@ -460,86 +456,75 @@ while true; do
         temp=$(thermal_cpu_temp)
         [ "${temp:-0}" -ge "$CFG_THRESH_COOKING" ] && TARGET="THERMAL_LIMIT"
         thermal_predict_check
-        [ $(( TICK % 10 )) -eq 0 ] && tune_cooking "$CODM_PKG"
-        [ $(( TICK % 20 )) -eq 0 ] && apply_irq_affinity
+        [ $(( TICK % 5 )) -eq 0 ] && tune_cooking "$CODM_PKG"
+        [ $(( TICK % 10 )) -eq 0 ] && apply_irq_affinity
         _stl=$(cat /sys/class/power_supply/battery/system_temp_level 2>/dev/null || echo 0)
         [ "${_stl:-0}" -gt "0" ] && w /sys/class/power_supply/battery/system_temp_level "0"
 
-        if [ $(( TICK % 2 )) -eq 0 ]; then
-            _temp=$(thermal_cpu_temp)
-            _gm=$(cat $GPU/devfreq/min_freq 2>/dev/null || echo 0)
-            _gp=$(cat $GPU/thermal_pwrlevel 2>/dev/null || echo 4)
-            if [ "${_temp:-0}" -ge 80 ] 2>/dev/null; then
-                w $GPU/thermal_pwrlevel "0"
-                w $GPU/devfreq/min_freq "267000000"
-                w $GPU/devfreq/max_freq "355000000"
-                w $GPU/min_pwrlevel "$GPU_LVL_355"
-                w $GPU/max_pwrlevel "$GPU_LVL_800"
-                w $GPU/force_clk_on "0"
-                echo "1" > "$GPU/throttling" 2>/dev/null || true
-                dbg "GPU thermal 80°C+: 355MHz max"
-            elif [ "${_temp:-0}" -ge 76 ] 2>/dev/null; then
-                w $GPU/thermal_pwrlevel "0"
-                w $GPU/devfreq/min_freq "342000000"
-                w $GPU/devfreq/max_freq "430000000"
-                w $GPU/min_pwrlevel "$GPU_LVL_430"
-                w $GPU/max_pwrlevel "$GPU_LVL_800"
-                w $GPU/force_clk_on "1"
-                w $GPU/force_bus_on "1"
-                echo "0" > "$GPU/throttling" 2>/dev/null || true
-                dbg "GPU thermal 76°C+: 430MHz max"
-            elif [ "${_temp:-0}" -ge 72 ] 2>/dev/null; then
-                w $GPU/thermal_pwrlevel "0"
-                w $GPU/devfreq/min_freq "430000000"
-                w $GPU/devfreq/max_freq "565000000"
-                w $GPU/min_pwrlevel "$GPU_LVL_565"
-                w $GPU/max_pwrlevel "$GPU_LVL_800"
-                w $GPU/force_clk_on "1"
-                w $GPU/force_bus_on "1"
-                echo "0" > "$GPU/throttling" 2>/dev/null || true
-                dbg "GPU thermal 72°C+: 565MHz max"
-            else
-                GPU_MAX_FREQ=800000000
-                w $GPU/thermal_pwrlevel "0"
-                w $GPU/devfreq/min_freq "565000000"
-                w $GPU/devfreq/max_freq "800000000"
-                w $GPU/min_pwrlevel "$GPU_LVL_650"
-                w $GPU/max_pwrlevel "$GPU_LVL_800"
-                w $GPU/force_clk_on "1"
-                w $GPU/force_bus_on "1"
-                echo "0" > "$GPU/throttling" 2>/dev/null || true
-                dbg "GPU uncapped: 565-800MHz (temp ${_temp}°C)"
-            fi
+        # GPU thermal management — thermal_pwrlevel overrides devfreq!
+        # Use direct pwrlevel writes for instant HW-throttle
+        _temp=$(thermal_cpu_temp)
+        if [ "${_temp:-0}" -ge 80 ] 2>/dev/null; then
+            w $GPU/thermal_pwrlevel "4"          # force level 4 = 355MHz
+            w $GPU/devfreq/min_freq "267000000"
+            w $GPU/devfreq/max_freq "355000000"
+            w $GPU/force_clk_on "0"
+            echo "0" > "$GPU/throttling" 2>/dev/null || true
+            dbg "GPU thermal 80°C+: thermal_pwrlevel=4 (355MHz)"
+        elif [ "${_temp:-0}" -ge 76 ] 2>/dev/null; then
+            w $GPU/thermal_pwrlevel "3"          # force level 3 = 430MHz
+            w $GPU/devfreq/min_freq "342000000"
+            w $GPU/devfreq/max_freq "430000000"
+            w $GPU/force_clk_on "1"
+            w $GPU/force_bus_on "1"
+            echo "0" > "$GPU/throttling" 2>/dev/null || true
+            dbg "GPU thermal 76°C+: thermal_pwrlevel=3 (430MHz)"
+        elif [ "${_temp:-0}" -ge 72 ] 2>/dev/null; then
+            w $GPU/thermal_pwrlevel "2"          # force level 2 = 565MHz
+            w $GPU/devfreq/min_freq "430000000"
+            w $GPU/devfreq/max_freq "565000000"
+            w $GPU/force_clk_on "1"
+            w $GPU/force_bus_on "1"
+            echo "0" > "$GPU/throttling" 2>/dev/null || true
+            dbg "GPU thermal 72°C+: thermal_pwrlevel=2 (565MHz)"
+        else
+            GPU_MAX_FREQ=800000000
+            w $GPU/thermal_pwrlevel "0"          # no throttle
+            w $GPU/devfreq/min_freq "565000000"
+            w $GPU/devfreq/max_freq "800000000"
+            w $GPU/force_clk_on "1"
+            w $GPU/force_bus_on "1"
+            echo "0" > "$GPU/throttling" 2>/dev/null || true
+            dbg "GPU uncapped: 565-800MHz (temp ${_temp}°C)"
         fi
 
-    if [ $(( TICK % 3 )) -eq 0 ]; then
-        _cm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 9999999)
-        _cmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
-        _cgm=$(cat "$P6/scaling_max_freq" 2>/dev/null || echo 9999999)
-        _cgmin=$(cat "$P6/scaling_min_freq" 2>/dev/null || echo 0)
-        _frozen=0
-        if [ "$_cm" -lt "500000" ]; then
-            _frozen=1
-        elif [ "$_cm" = "$_cmin" ] && [ "$_cm" -lt "1600000" ]; then
-            _frozen=1
-        fi
-        if [ "$STATE" = "COOKING" ] && [ "${_cgm}" -lt "2169600" ] 2>/dev/null; then
-            dbg "Gold capped at ${_cgm}Hz — recovery"
-            lmh_disable
-            cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
-        fi
-        if [ "$_frozen" = "1" ]; then
-            warn "CPU FREEZE (Silver min=${_cmin} max=${_cm}) — re-apply"
-            for _te in $(pgrep -f "msm_thermal\|thermal-engine\|mi_thermald\|themal" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
-            thermal_full_disable; sleep 0.5
-            lmh_disable
-            cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
-            w $GPU/thermal_pwrlevel "0"; w $GPU/devfreq/min_freq "565000000"
-            w $GPU/devfreq/max_freq "$GPU_MAX_FREQ"; w $GPU/force_clk_on "1"
-            echo "0" > "$GPU/throttling" 2>/dev/null || true
-            w /sys/class/power_supply/battery/system_temp_level "0"
-            apply_irq_affinity; log "CPU+GPU+IRQ recovered"
-        fi
+    # CPU FREEZE check — EVERY tick (1s) instead of every 9s
+    _cm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 9999999)
+    _cmin=$(cat "$P0/scaling_min_freq" 2>/dev/null || echo 0)
+    _cgm=$(cat "$P6/scaling_max_freq" 2>/dev/null || echo 9999999)
+    _cgmin=$(cat "$P6/scaling_min_freq" 2>/dev/null || echo 0)
+    _frozen=0
+    if [ "$_cm" -lt "500000" ]; then
+        _frozen=1
+    elif [ "$_cm" = "$_cmin" ] && [ "$_cm" -lt "1600000" ]; then
+        _frozen=1
+    fi
+    if [ "$STATE" = "COOKING" ] && [ "${_cgm}" -lt "2169600" ] 2>/dev/null; then
+        dbg "Gold capped at ${_cgm}Hz — recovery"
+        lmh_disable
+        cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
+    fi
+    if [ "$_frozen" = "1" ]; then
+        warn "CPU FREEZE (Silver min=${_cmin} max=${_cm}) — re-apply"
+        for _te in $(pgrep -f "msm_thermal\|thermal-engine\|mi_thermald\|themal" 2>/dev/null); do kill -9 "$_te" 2>/dev/null || true; done
+        thermal_full_disable; sleep 0.5
+        lmh_disable
+        cpu_set "schedutil" "1497600" "1804800" "2169600" "2304000"
+        w $GPU/thermal_pwrlevel "1"; w $GPU/devfreq/min_freq "565000000"
+        w $GPU/devfreq/max_freq "800000000"; w $GPU/force_clk_on "1"
+        echo "0" > "$GPU/throttling" 2>/dev/null || true
+        w /sys/class/power_supply/battery/system_temp_level "0"
+        apply_irq_affinity; log "CPU+GPU+IRQ recovered"
     fi
 elif [ "$STATE" = "DAILY" ]; then
     if [ $(( TICK % 6 )) -eq 0 ]; then
@@ -556,8 +541,7 @@ elif [ "$STATE" = "THERMAL_RECOVERY" ]; then
         _dm=$(cat "$P0/scaling_max_freq" 2>/dev/null || echo 0)
         if [ "$_dm" -gt "1300000" ] 2>/dev/null; then
             cpu_set "schedutil" "576000" "1248000" "652800" "1651200"
-            cpu_hotplug_offline_gold
-            sched_daily; gpu_daily
+            sched_recovery; gpu_daily
         fi
     fi
     fi
@@ -579,7 +563,7 @@ elif [ "$STATE" = "THERMAL_RECOVERY" ]; then
     [ $(( TICK % 10 )) -eq 0 ] && [ "$STATE" = "COOKING" ] && \
         iw dev wlan0 set power_save off 2>/dev/null || true
     [ $(( TICK % 30 )) -eq 0 ] && fstrim /data 2>/dev/null || true
-    [ $(( TICK % 200 )) -eq 0 ] && log "♥ $STATE tick=$TICK temp=$(thermal_cpu_temp)°C"
+    [ $(( TICK % 600 )) -eq 0 ] && log "♥ $STATE tick=$TICK temp=$(thermal_cpu_temp)°C"
     [ $(( TICK % 1000 )) -eq 0 ] && trim_log
     sleep 3
 done

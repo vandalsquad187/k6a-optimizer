@@ -22,7 +22,7 @@ GPU=/sys/class/kgsl/kgsl-3d0
 P0=/sys/devices/system/cpu/cpufreq/policy0
 P6=/sys/devices/system/cpu/cpufreq/policy6
 
-GPU_LVL_800=0; GPU_LVL_650=1; GPU_LVL_565=2; GPU_LVL_430=3; GPU_LVL_355=4; GPU_LVL_267=5; GPU_LVL_140=7
+GPU_LVL_800=0; GPU_LVL_650=1; GPU_LVL_565=2; GPU_LVL_430=3; GPU_LVL_355=4; GPU_LVL_267=5; GPU_LVL_180=6; GPU_LVL_140=7
 GPU_MAX_FREQ=650000000
 
 CS_TOP="/dev/cpuset/top-app"
@@ -185,12 +185,15 @@ cpu_set() {
 # ═══════════════════════════════════════════════════════════════════════════════
 cpu_hotplug_offline_silver() {
     [ "$FEATURE_HOTPLUG" = "0" ] && return 0
-    local c
+    local c ok=0
     for c in 0 1 2 3; do
         [ -f /sys/devices/system/cpu/cpu${c}/online ] || continue
-        echo 0 > /sys/devices/system/cpu/cpu${c}/online 2>/dev/null || true
+        local before
+        before=$(cat /sys/devices/system/cpu/cpu${c}/online 2>/dev/null)
+        [ "$before" = "0" ] && continue
+        echo 0 > /sys/devices/system/cpu/cpu${c}/online 2>/dev/null && ok=1
     done
-    _log "CPU Hotplug: Silver cores 0-3 offline"
+    [ "$ok" = "1" ] && _log "CPU Hotplug: Silver cores 0-3 offline"
 }
 
 cpu_hotplug_online_all() {
@@ -205,12 +208,15 @@ cpu_hotplug_online_all() {
 
 cpu_hotplug_offline_gold() {
     [ "$FEATURE_HOTPLUG" = "0" ] && return 0
-    local c
+    local c ok=0
     for c in 6 7; do
         [ -f /sys/devices/system/cpu/cpu${c}/online ] || continue
-        echo 0 > /sys/devices/system/cpu/cpu${c}/online 2>/dev/null || true
+        local before
+        before=$(cat /sys/devices/system/cpu/cpu${c}/online 2>/dev/null)
+        [ "$before" = "0" ] && continue
+        echo 0 > /sys/devices/system/cpu/cpu${c}/online 2>/dev/null && ok=1
     done
-    _log "CPU Hotplug: Gold cores 6-7 offline"
+    [ "$ok" = "1" ] && _log "CPU Hotplug: Gold cores 6-7 offline"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -414,6 +420,40 @@ sched_daily() {
     w "$P0/schedutil/pl"              "0"
     w "$P6/schedutil/pl"              "0"
     _dbg "Sched daily: Cpusets=0-3 upmigrate=100 uclamp_max=50 rates=10000/50000 hispeed=100 pl=0"
+}
+
+sched_recovery() {
+    echo "0-7" > "$CS_TOP/cpus"      2>/dev/null || true
+    echo "0-7" > "$CS_FG/cpus"       2>/dev/null || true
+    echo "0-3" > "$CS_SYS/cpus"      2>/dev/null || true
+    echo "0-3" > "$CS_BG/cpus"       2>/dev/null || true
+    echo "0-3" > "$CS_RESTRICT/cpus" 2>/dev/null || true
+    w "$CS_TOP/uclamp.min"               "0.00"
+    w "$CS_TOP/uclamp.max"               "50.00"
+    w "$CS_TOP/uclamp.boosted"           "0"
+    w "$CS_TOP/uclamp.latency_sensitive" "0"
+    w "$CS_FG/uclamp.min"                "0.00"
+    w "$CS_FG/uclamp.max"                "50.00"
+    w "$CS_FG/uclamp.boosted"            "0"
+    w "$CS_FG/uclamp.latency_sensitive"  "0"
+    w /proc/sys/kernel/sched_upmigrate        "95"
+    w /proc/sys/kernel/sched_downmigrate      "85"
+    w /proc/sys/kernel/sched_child_runs_first "1"
+    w /proc/sys/kernel/sched_energy_aware     "1"
+    w /proc/sys/kernel/sched_util_clamp_min   "0"
+    w /proc/sys/kernel/sched_util_clamp_max   "512"
+    w /proc/sys/kernel/sched_boost            "0"
+    w "$P0/schedutil/up_rate_limit_us"    "5000"
+    w "$P0/schedutil/down_rate_limit_us"  "50000"
+    w "$P6/schedutil/up_rate_limit_us"    "5000"
+    w "$P6/schedutil/down_rate_limit_us"  "50000"
+    w "$P0/schedutil/hispeed_load"    "90"
+    w "$P0/schedutil/hispeed_freq"    "0"
+    w "$P6/schedutil/hispeed_load"    "90"
+    w "$P6/schedutil/hispeed_freq"    "0"
+    w "$P0/schedutil/pl"              "0"
+    w "$P6/schedutil/pl"              "0"
+    _dbg "Sched recovery: Cpusets=0-7 upmigrate=95 uclamp_max=50 rates=5000/50000"
 }
 
 sched_cooking() {
@@ -687,21 +727,34 @@ sf_daily() {
 # BATTERY SPOOF
 # ═══════════════════════════════════════════════════════════════════════════════
 spoof_battery() {
+    # Save real bms temp before spoofing (for restore)
+    local real_temp
+    real_temp=$(cat /sys/class/power_supply/bms/temp 2>/dev/null || echo "")
+    [ -n "$real_temp" ] && [ "$real_temp" -gt 0 ] 2>/dev/null && \
+        printf '%s\n' "$real_temp" > "$MODDIR/run/real_bat_temp"
+
     local raw=250
-    for node in /sys/class/power_supply/battery/temp /sys/class/power_supply/bms/temp; do
-        [ -f "$node" ] && printf '%s\n' "$raw" > "$node" 2>/dev/null
-    done
+    # Only spoof battery/temp, NOT bms/temp (bms is the real sensor)
+    [ -f /sys/class/power_supply/battery/temp ] && \
+        printf '%s\n' "$raw" > /sys/class/power_supply/battery/temp 2>/dev/null
     cmd thermalservice override-status 0 2>/dev/null || true
-    _log "Battery spoof: 25°C (raw ${raw})"
+    _log "Battery spoof: 25°C (bms saved: ${real_temp:-N/A})"
 }
 
 restore_battery_spoof() {
-    local rt
-    rt=$(cat /sys/class/power_supply/bms/temp 2>/dev/null || echo "")
-    if [ -n "$rt" ] && [ "$rt" -gt 0 ] 2>/dev/null; then
-        echo "$rt" > /sys/class/power_supply/battery/temp 2>/dev/null || true
-        _log "Battery spoof restored: BMS temp=${rt} → battery/temp"
+    local saved_rt
+    saved_rt=$(cat "$MODDIR/run/real_bat_temp" 2>/dev/null || echo "")
+    if [ -n "$saved_rt" ] && [ "$saved_rt" -gt 0 ] 2>/dev/null; then
+        echo "$saved_rt" > /sys/class/power_supply/battery/temp 2>/dev/null || true
+        _log "Battery spoof restored: ${saved_rt} → battery/temp"
+    else
+        local rt
+        rt=$(cat /sys/class/power_supply/bms/temp 2>/dev/null || echo "")
+        [ -n "$rt" ] && [ "$rt" -gt 0 ] 2>/dev/null && \
+            echo "$rt" > /sys/class/power_supply/battery/temp 2>/dev/null || true
+        _log "Battery spoof restored (fallback): bms=${rt:-N/A} → battery/temp"
     fi
+    rm -f "$MODDIR/run/real_bat_temp" 2>/dev/null
     cmd thermalservice reset 2>/dev/null || true
 }
 
@@ -718,16 +771,21 @@ tune_cooking() {
     [ -z "$main_pid" ] && return 0
 
     local tid tname
+    # Use wider core mask when hotplug is active (silver offline → use all gold 4-7)
+    local render_mask="0xc0"
+    [ "${CFG_CPU_HOTPLUG:-0}" = "1" ] && render_mask="0xf0"
+    local worker_mask="0x3f"
+    [ "${CFG_CPU_HOTPLUG:-0}" = "1" ] && worker_mask="0xf0"
     for tid in /proc/"$main_pid"/task/*/; do
         tid="${tid%/}"; tid="${tid##*/}"
         [ -f "/proc/$main_pid/task/$tid/comm" ] || continue
         tname=$(cat "/proc/$main_pid/task/$tid/comm" 2>/dev/null)
         case "$tname" in
             *RenderThread*|*UnityMain*|*GLThread*)
-                taskset -p 0xc0 "$tid" >/dev/null 2>&1
+                taskset -p $render_mask "$tid" >/dev/null 2>&1
                 chrt -f -p 1 "$tid" 2>/dev/null || true ;;
             *Worker*Thread*|*JobWorker*|*UnityGfx*)
-                taskset -p 0x3f "$tid" >/dev/null 2>&1
+                taskset -p $worker_mask "$tid" >/dev/null 2>&1
                 chrt -b -p 0 "$tid" 2>/dev/null || true ;;
             *AudioMixer*|*AudioTrack*)
                 taskset -p 0x3f "$tid" >/dev/null 2>&1
