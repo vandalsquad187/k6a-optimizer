@@ -375,7 +375,7 @@ while true; do
             _PAUSED=1; log "⏸ PAUSED"
             thermal_full_restore; restore_battery_spoof
         }
-        sleep 1; TICK=$(( TICK + 1 )); continue
+        write_data; sleep 1; TICK=$(( TICK + 1 )); continue
     fi
     [ "$_PAUSED" = "1" ] && { _PAUSED=0; log "▶ RESUMED"; _cfg_load_cache; }
 
@@ -565,5 +565,5 @@ elif [ "$STATE" = "THERMAL_RECOVERY" ]; then
     [ $(( TICK % 30 )) -eq 0 ] && fstrim /data 2>/dev/null || true
     [ $(( TICK % 600 )) -eq 0 ] && log "♥ $STATE tick=$TICK temp=$(thermal_cpu_temp)°C"
     [ $(( TICK % 1000 )) -eq 0 ] && trim_log
-    sleep 3
+    sleep 1
 done
